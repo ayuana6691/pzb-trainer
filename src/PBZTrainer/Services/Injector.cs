@@ -88,11 +88,12 @@ namespace PBZTrainer.Services
 
         /// <summary>
         /// 找到 PBZBridge.dll。查找顺序：
+        /// 0) 内嵌在 exe 里时先释放到本地缓存（正常发布包都走这一步）
         /// 1) 环境变量 PBZ_BRIDGE 指定的完整路径
         /// 2) 程序所在目录
         /// 3) 游戏安装目录（PBZ.exe 旁边）
         /// 4) 常见的小伍盒子模块目录（data/modules/**）
-        /// 组件属于第三方文件，仓库里不带，需要自备。
+        /// 1)~4) 是内嵌释放失败时的兜底，源码里也已入库同一份文件，正常不需要用户自备。
         /// </summary>
         public static string ResolveBridgePath()
         {

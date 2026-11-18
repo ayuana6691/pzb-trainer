@@ -7,7 +7,7 @@ namespace PBZTrainer
 {
     public partial class App : Application
     {
-        /// <summary>启动参数 --page &lt;tag&gt; 可直接打开某个页面（basic/advanced/add/inv/spawn/map/completion/minimap/esp/fav）。</summary>
+        /// <summary>启动参数 --page &lt;tag&gt; 可直接打开某个页面（页签见 MainWindow 的 NavModel；功能分类写分类名，旧版的 basic / advanced 会落到第一个分类）。</summary>
         public static string StartupPage;
 
         private static string ParsePage(string[] args)

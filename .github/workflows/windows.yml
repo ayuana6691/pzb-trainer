@@ -2,7 +2,9 @@ name: Release build and publish
 
 # 只在推 tag（v1.2.3）时构建，构建产物直接上传到同名 Release。
 # 刻意不使用 actions/upload-artifact：workflow artifact 会占用账号存储额度，
-# Release 资产不占。发版方式：改版本 -> 提交 -> 打 tag -> push tag。
+# Release 资产不占。发版方式：改 PBZTrainer.csproj 的 <Version> + docs/USAGE.txt 与
+# docs/FIRST-RUN.txt 首行的版本号 -> 提交 -> 打 tag -> push tag
+# （docs/*.txt 会原样打进 zip，CI 只按 tag 覆盖 exe 的版本，文档首行不改就会落后一版）。
 
 on:
   push:

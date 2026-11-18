@@ -8,7 +8,9 @@
    · 启动后自动找到 PBZ.exe、连接游戏、解除功能限制（只改进程内存，不动任何文件）。
 3. 右上角变成「● 游戏已就绪」即可使用；显示「请先启动游戏」时会每 6 秒自动重连。
    · 拖动标题栏可移动窗口；右上角「置顶 / — / ✕」。
-   · 直达某页：PBZTrainer.exe --page add|inv|spawn|map|quest|completion|minimap|esp|hotkeys|diagnostics
+   · 直达某页：PBZTrainer.exe --page <页签>。页签是 add / inv / spawn / map / minimap / esp /
+     quest / achievement / appearance / model / skill / chain / bossmove / resource / attribute /
+     hotkeys / diagnostics / completion；功能分类直接写分类名（如「战斗与生存」）。
 
 【界面结构】
 左侧是分组导航（点分组标题可展开/收起），右侧是当前页内容：
@@ -21,7 +23,8 @@
         资源设置 / 角色属性 / 快捷键 / 连接诊断
   自动化：一键全收集
 76 项功能开关全部按类别分散在这 10 个分类里（19 个开关型 / 48 个数值型 / 9 个执行型），
-没有单独的「基础/高级」栏目；再算上 14 个工具页，可操作条目共 3000 余条。
+没有单独的「基础/高级」栏目；再算上 14 个数据工具页（快捷键与连接诊断是设置页，
+小地图 / 透视是悬浮层），可操作条目共 3000 余条。
 功能页顶部的搜索框（Ctrl+F）会跨分类匹配名称、说明、代号和分类名。点「只看已开启」可查看所有分类中当前打开的开关，也可继续输入关键词缩小范围。右上角显示命中数和总数。
 
 【卡片状态怎么读】
@@ -115,17 +118,20 @@
 【连不上 / 显示未就绪】
 · 状态栏会直接显示游戏侧给的原因（例如「当前入口格式尚未适配」「任务系统尚未就绪」），
   不再是笼统的「等待进入场景」。
-· 打开「更多 → 连接诊断」→「开始诊断」，会列出：程序版本、是否管理员、检测到的 PBZ 进程、
-  ready / catalogReady / 场景 / 角色 / 坐标，以及 12 个目录的读取结果。
-  点「复制」或「保存到桌面」，把文本发给作者即可定位问题。
+· 打开「更多 → 连接诊断」会自动跑一次（也可以再点「开始诊断」），会列出：程序版本、是否管理员、
+  运行模块的来源与所在目录、检测到的 PBZ 进程、ready / catalogReady / 场景 / 角色 / 坐标，
+  以及 12 个目录的读取结果。点「复制」或「保存到桌面」，把文本发给作者即可定位问题。
 · 连接失败时，窗口底部提示条会把原因和排查建议一起显示（约 6 秒）；
   连不上先看这一条，通常是游戏装了 mod。
 
 【数据与存档】
 · 开关、数值、页签、热键自动保存：%LOCALAPPDATA%\影之刃零修改器\trainer_state.json
   （字段：SelectedPage / AutoSave / OnlyWhenTargetOrPanelForeground / PanelToggleHotkey /
-    RestoreSettings / SpawnHotkey / SpawnHotkeyId / SpawnHotkeyName / SpawnHotkeyCount /
-    SpawnHotkeyDistance / SpawnHotkeyFriendly / Features{Enabled,Value,Hotkey}）
+    RestoreSettings / Features{Enabled,Value,Hotkey} /
+    SpawnBindings{怪物 id: Hotkey / Name / Count / Distance / Friendly}）
+  · SpawnBindings 是每个怪物一条的一键生成热键。旧版只有一个 SpawnHotkey 的那套字段
+    （SpawnHotkey*）现在只在读旧配置时兼容，写回时会并进 SpawnBindings。
+· 外观主题与收藏标记另存同目录的 preferences.json（Theme / Favorites）。
 · 添加物品、改数量、删除、全收集、任务、成就、属性都会真实写入存档，关掉修改器不会撤销，
   请先备份。
 
@@ -149,8 +155,9 @@
 删除本目录，再删除 %LOCALAPPDATA%\影之刃零修改器 即可；不写注册表、不留服务。
 
 【技术备注】
-· 功能清单取自原版模块内嵌资源 PBZFeatures.json（76 条）与 PBZCatalog.json
-  （items 790 / enemies 177 / achievements 66 / quests 80 / collections 630 / resources 99）。
+· 功能表 PBZFeatures.json（76 条）与属性表 PBZAttributes.json（223 条）内嵌在程序里；
+  物品 / 怪物 / 地点 / 技能等目录在连接后由运行模块从游戏侧读取，条目数随游戏版本变化。
+  PBZCatalog.json 是可选的本地中文名映射表，只影响显示名，程序不带它。
 · 协议：命名管道 \\.\pipe\ChuwuPBZ_v1_<游戏PID>，帧 = 4 字节小端长度 + UTF-8 JSON；
   每个请求自动附加 requestId / session / clientPid。
   指令：hello、capabilities、feature、collection_step、catalog{type}、grant_items、

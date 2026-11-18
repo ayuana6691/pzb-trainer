@@ -2,28 +2,16 @@
 
 《影之刃零 / Phantom Blade Zero》单人模式的外部修改器，C# / WPF 实现，水墨暗色 + 朱砂红界面。
 
-原作者：[Kuuga-913](https://github.com/Kuuga-913)（B 站账号 **KuugaOOO**）。本仓库是 [Kuuga-913/pzb-trainer](https://github.com/Kuuga-913/pzb-trainer) 的 fork，在其基础上做二次开发，具体改动与致谢见下方「[来源与致谢](#来源与致谢)」。上游作者的提示：其余账号发布的同名修改器均为盗版。
+原作者：[Kuuga-913](https://github.com/Kuuga-913)（B 站账号 **KuugaOOO**）。本仓库是 [Kuuga-913/pzb-trainer](https://github.com/Kuuga-913/pzb-trainer)的二次开发，从v1.11.16版本开始，感谢[Kuuga-913](https://github.com/Kuuga-913)。
 
-**76 项功能开关 + 3000 余条可操作条目**：10 个功能分类、14 个工具页、2 个游戏内悬浮层。
+**76 项功能开关 + 3000 余条可操作条目**：10 个功能分类、14 个数据工具页、2 个管理页（快捷键 / 连接诊断）、2 个游戏内悬浮层。
 **默认以管理员权限启动**，游戏无论用普通权限还是管理员权限打开都能连上；启动时系统会弹一次 UAC，点「是」即可。
 
 ![截图](assets/screenshot.png)
 
 ## 下载
 
-**[⬇ 打开最新版 Release](https://github.com/ayuana6691/pzb-trainer/releases/latest)**（Windows x64，在页面里下载 `PBZTrainer-v<版本>-win-x64.zip`，约 62 MiB，解压后是单个 exe）
-
-| 项目 | 说明 |
-|---|---|
-| 版本 | 页面上的就是最新一版，版本号取自 git tag；zip 文件名也带着版本号 |
-| 体积 | 约 62 MiB；解压后 `PBZTrainer.exe` 约 67.5 MiB（每版略有浮动） |
-| 使用 | 下载 → 解压 → 双击 `PBZTrainer.exe` → UAC 点「是」→ 先开游戏、进存档后即为「● 游戏已就绪」 |
-| 自带 | .NET 8 运行时与运行模块，免安装、免配置，**不需要单独准备任何文件** |
-| 校验 | 包内 `SHA256SUMS.txt`，Release 页也逐项列出 |
-
-`/releases/latest` 永远落在最新一版上，所以这个入口不用随版本改，但下载下来的文件仍然叫 `PBZTrainer-v1.11.18-win-x64.zip` 这种带版本号的名字，存到本地也分得清。要下旧版去 [Releases 列表](https://github.com/ayuana6691/pzb-trainer/releases) 挑（只保留最新 3 个）。
-
-包内文件：`PBZTrainer.exe`、`使用说明.txt`、`首次使用.txt`、`LICENSE`、`NOTICE.md`、`SHA256SUMS.txt`。
+**[⬇ 最新版 Release](https://github.com/ayuana6691/pzb-trainer/releases/latest)**
 
 > **近期更新**（本仓库二次开发）：
 > - **打包流程重做**：产物默认自带 .NET 8 运行时并内嵌运行模块，修掉「点击 exe 提示缺少运行依赖」；
@@ -108,7 +96,7 @@
 powershell -NoProfile -ExecutionPolicy Bypass -File pack.ps1
 ```
 
-`pack.ps1` 一次做完：`dotnet publish`（`--self-contained true` + 单文件）→ 内嵌运行模块 → 自检 → 组装发布目录 → 打 zip。自检覆盖三项：单文件 bundle 头可解析、包里带 .NET 运行时与 WPF 原生库（`System.Private.CoreLib.dll` / `PresentationFramework.dll` / `wpfgfx_cor3.dll` / `vcruntime140_cor3.dll`）、内嵌模块的 SHA-256 与 `Data\PBZBridge.dll` 一致。任一项不过就以退出码 1 结束，不产出半成品包。
+`pack.ps1` 走六步：环境 → 运行模块 → `dotnet publish`（`--self-contained true` + 单文件）→ 产物自检 → 组装发布目录 → 打 zip。第 4 步的自检覆盖四项：发布目录里只有 `PBZTrainer.exe` 一个文件（多出 dll / json 就是漏了自带运行时的包）、单文件 bundle 头可解析、包里带 .NET 运行时与 WPF 原生库（`System.Private.CoreLib.dll` / `PresentationFramework.dll` / `wpfgfx_cor3.dll` / `vcruntime140_cor3.dll`）、内嵌模块的 SHA-256 与 `Data\PBZBridge.dll` 一致。任一项不过就以退出码 1 结束，不产出半成品包。
 
 产物：
 
@@ -131,9 +119,11 @@ git tag v1.2.3
 git push origin v1.2.3
 ```
 
-推 `v*` tag 后 [windows.yml](.github/workflows/windows.yml) 会：解析 tag 里的版本号 → `pack.ps1 -OutRoot out/ci -Version <版本>`（内嵌运行模块、跑完六步自检）→ `gh release create` 把 `PBZTrainer-v<版本>-win-x64.zip` 和 `SHA256SUMS.txt` 挂到同名 Release → 删掉第 4 个及更早的 Release（保留最新 3 个，tag 本身保留）。
+推 `v*` tag 后 [windows.yml](.github/workflows/windows.yml) 会：解析 tag 里的版本号 → `pack.ps1 -OutRoot out/ci -Version <版本>`（内嵌运行模块，跑完 6 步流程，其中第 4 步是四项产物自检）→ `gh release create` 把 `PBZTrainer-v<版本>-win-x64.zip` 和 `SHA256SUMS.txt` 挂到同名 Release → 删掉第 4 个及更早的 Release（保留最新 3 个，tag 本身保留）。
 
-发一版要动的只有 `<Version>` 和 tag，README 不用改：下载入口指向 `/releases/latest` 页面，永远落在最新一版上。
+发一版要动三处：`src\PBZTrainer\PBZTrainer.csproj` 的 `<Version>`、`docs\USAGE.txt` 与 `docs\FIRST-RUN.txt` 首行的版本号，然后打 tag。README 不用改：下载入口指向 `/releases/latest` 页面，永远落在最新一版上。
+
+`docs\*.txt` 会原样打进 zip，版本号是写死在首行的，CI 只按 tag 覆盖 exe 的版本——忘了改就会出现「exe 是 1.11.18、包内说明写着 1.11.16」，v1.11.17 和 v1.11.18 就是这样发出去的。
 
 几个刻意的选择：
 
@@ -147,24 +137,30 @@ git push origin v1.2.3
 
 ```
 src/PBZTrainer/
+  App.xaml / App.xaml.cs  应用入口：主题与全部控件样式、未处理异常日志、--page 启动参数
   Services/
-    Injector.cs        定位游戏进程、加载运行时、解析运行路径
+    Injector.cs        定位游戏进程、释放内嵌运行模块、解析运行路径
     BridgeClient.cs    命名管道客户端：帧收发、握手、能力轮询
     BridgeCommands.cs  完整指令集（目录 / 物品 / 生成 / 传送 / 全收集 / 小地图 / 透视）
     BridgeGate.cs      解除功能限制（仅改游戏进程内存）
     HotkeyService.cs   全局热键（低级键盘钩子）
-    StateStore.cs      状态持久化（字段与原版 trainer_state.json 兼容）
+    StateStore.cs      状态持久化（trainer_state.json / preferences.json）
   Views/
-    MainWindow.xaml    主界面：左侧分组导航 + 右侧功能卡片
+    MainWindow.xaml    主界面布局：左侧分组导航 + 右侧功能卡片
+    MainWindow.xaml.cs 页面注册、导航、连接轮询、启动时恢复设置
     CatalogView.cs     通用目录浏览器（物品 / 背包 / 怪物 / 地点）
     ActionListView.cs  通用动作页（任务 / 成就 / 外观 / 模型 / 技能 / 招式 / 资源 / 属性）
     SkillChainView.cs  技能连段编排（队列 + 依次释放）
     CompletionView.cs  一键全收集（进度 + 结果弹窗）
+    HotkeyPickerView.cs 快捷键中心（唤出 / 隐藏、一键生成怪物）
+    DiagnosticsView.cs 连接诊断（环境 / 能力 / 12 个目录的读取结果）
     OverlayService.cs  小地图 / 透视的驱动与轮询
     OverlayWindows.cs  贴在游戏画面上的透明悬浮层
-    EspView.cs / MinimapView.cs / UiKit.cs
-  Models/              功能清单解析、状态模型、id→中文名映射
-  Data/PBZFeatures.json 功能表（76 项：id / 标题 / 分类 / 类型 / 默认值）
+    EspView.cs / MinimapView.cs / UiKit.cs / ListDetailGrid.cs / SwitchFeedback.cs / ISearchablePage.cs
+  Models/              功能清单解析、状态模型、id→中文名映射（FeatureVm / AttributeCatalog / CatalogNames / NumericInput）
+  Data/PBZFeatures.json   功能表（76 项：id / 标题 / 分类 / 类型 / 默认值）
+  Data/PBZAttributes.json 属性表（223 项：id / 中文名 / 分类）
+  Data/PBZBridge.dll      运行模块二进制，打包时内嵌进 exe（已入库）
 ```
 
 ## 技术说明
@@ -209,7 +205,7 @@ src/PBZTrainer/
 
 本仓库在上游基础上的二次开发：
 
-- **打包流程**：新增 [pack.ps1](pack.ps1)，把「自带 .NET 运行时 + 内嵌运行模块」固化成默认，并加六步产物自检（单文件 bundle、运行时与 WPF 原生库、内嵌模块 SHA-256），修掉点击 exe 提示缺少运行依赖的问题；
+- **打包流程**：新增 [pack.ps1](pack.ps1)，把「自带 .NET 运行时 + 内嵌运行模块」固化成默认，并加四项产物自检（只允许单个 exe、单文件 bundle、运行时与 WPF 原生库、内嵌模块 SHA-256），修掉点击 exe 提示缺少运行依赖的问题；
 - **发布流程**：改为推 `v*` tag 触发 Actions、产物直接上传 Release，不再保留 workflow artifact，只保留最新 3 个版本；
 - **版本管理**：版本号唯一来源改为 git tag，去掉写死的 `AssemblyVersion` / `FileVersion`；
 - **交互修复**：设置恢复、连段取消、快捷键误触、开关加载反馈、窄窗列表与跨分类搜索。
