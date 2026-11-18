@@ -3,6 +3,7 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:local="clr-namespace:PBZTrainer"
         xmlns:m="clr-namespace:PBZTrainer.Models"
+        xmlns:views="clr-namespace:PBZTrainer.Views"
         Title="影之刃零 修改器"
         Width="1200" Height="900" MinWidth="940" MinHeight="640"
         WindowStyle="None" AllowsTransparency="True" Background="Transparent"
@@ -67,9 +68,13 @@
                                    VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
                     </StackPanel>
 
-                    <ToggleButton Grid.Row="0" Grid.Column="1" Style="{StaticResource Switch}"
+                    <ToggleButton x:Name="FeatureSwitch" Grid.Row="0" Grid.Column="1" Style="{StaticResource Switch}"
                                   VerticalAlignment="Center"
-                                  IsChecked="{Binding IsEnabled, Mode=TwoWay}"
+                                  IsChecked="{Binding ToggleChecked, Mode=TwoWay}"
+                                  IsEnabled="{Binding CanInteract}"
+                                  views:SwitchFeedback.IsLoading="{Binding IsBusy}"
+                                  AutomationProperties.Name="{Binding Title}"
+                                  AutomationProperties.ItemStatus="{Binding StateText}"
                                   Visibility="{Binding HasToggle, Converter={StaticResource Vis}}"/>
 
                     <TextBlock Grid.Row="1" Grid.Column="0" Grid.ColumnSpan="2"
@@ -81,17 +86,22 @@
                                 VerticalAlignment="Center">
                         <TextBox Style="{StaticResource ValueBox}" Width="88" Height="28"
                                  Text="{Binding ValueText, UpdateSourceTrigger=PropertyChanged}"
+                                 IsReadOnly="{Binding IsBusy}"
                                  Visibility="{Binding HasValue, Converter={StaticResource Vis}}"
-                                 KeyDown="ValueBox_KeyDown" LostFocus="ValueBox_LostFocus"/>
-                        <Button Content="−" Style="{StaticResource Ghost}" Width="24" Height="28"
+                                 GotKeyboardFocus="ValueBox_GotKeyboardFocus" KeyDown="ValueBox_KeyDown"
+                                 LostKeyboardFocus="ValueBox_LostKeyboardFocus"/>
+                        <Button x:Name="StepDown" Content="−" Style="{StaticResource Ghost}" Width="24" Height="28"
                                 Padding="0" Margin="5,0,0,0" FontSize="13" Click="StepDown_Click"
+                                IsEnabled="{Binding CanInteract}"
                                 Visibility="{Binding HasValue, Converter={StaticResource Vis}}"/>
-                        <Button Content="+" Style="{StaticResource Ghost}" Width="24" Height="28"
+                        <Button x:Name="StepUp" Content="+" Style="{StaticResource Ghost}" Width="24" Height="28"
                                 Padding="0" Margin="4,0,0,0" FontSize="12" Click="StepUp_Click"
+                                IsEnabled="{Binding CanInteract}"
                                 Visibility="{Binding HasValue, Converter={StaticResource Vis}}"/>
 
                         <Button Content="{Binding ActionText}" Style="{StaticResource Ghost}"
                                 Height="28" Margin="8,0,0,0" FontSize="11.5" Padding="10,0"
+                                IsEnabled="{Binding CanInteract}"
                                 Click="Action_Click"/>
                     </StackPanel>
 
@@ -107,6 +117,10 @@
                                     </DataTrigger>
                                     <DataTrigger Binding="{Binding IsUnsupported}" Value="True">
                                         <Setter Property="Foreground" Value="#C0392B"/>
+                                        <Setter Property="FontWeight" Value="SemiBold"/>
+                                    </DataTrigger>
+                                    <DataTrigger Binding="{Binding IsBusy}" Value="True">
+                                        <Setter Property="Foreground" Value="#D9A441"/>
                                         <Setter Property="FontWeight" Value="SemiBold"/>
                                     </DataTrigger>
                                 </Style.Triggers>
@@ -176,15 +190,15 @@
                 <StackPanel Grid.Column="1" Margin="14,0,0,0" VerticalAlignment="Center">
                     <StackPanel Orientation="Horizontal">
                         <TextBlock Text="影之刃零" FontFamily="{StaticResource BrushFont}" FontSize="25"
-                                   Foreground="#F3EDE6"/>
-                        <Rectangle Width="1" Height="17" Fill="{DynamicResource Gold}" Margin="12,4,12,0"
+                                   Foreground="#F3EDE6" VerticalAlignment="Center"/>
+                        <Rectangle Width="1" Height="17" Fill="{DynamicResource Gold}" Margin="12,0"
                                    VerticalAlignment="Center"/>
-                        <TextBlock Text="修改器" FontSize="13" Foreground="#A79CA8" VerticalAlignment="Center"
-                                   Margin="0,2,0,0"/>
-                        <Border Background="#1E1B23" CornerRadius="4" Padding="6,2" Margin="10,2,0,0"
-                                BorderThickness="1" BorderBrush="{DynamicResource Border}">
+                        <TextBlock Text="修改器" FontSize="13" Foreground="#A79CA8" VerticalAlignment="Center"/>
+                        <Border Background="#1E1B23" CornerRadius="4" Padding="6,2" Margin="10,0,0,0"
+                                BorderThickness="1" BorderBrush="{DynamicResource Border}" VerticalAlignment="Center">
                             <TextBlock x:Name="CountBadge" Text="76 项" FontSize="10.5"
-                                       Foreground="{DynamicResource Jade}"/>
+                                       Foreground="{DynamicResource Jade}" HorizontalAlignment="Center"
+                                       VerticalAlignment="Center"/>
                         </Border>
                     </StackPanel>
                     <TextBlock x:Name="SubtitleText" Text="水墨江湖 · 全功能训练器"
@@ -296,16 +310,21 @@
                 <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
                     <Ellipse Width="5" Height="5" Fill="{DynamicResource Gold}" VerticalAlignment="Center"
                              Margin="0,0,7,0"/>
-                    <TextBlock x:Name="FooterInfo" Text="等待游戏连接" Style="{StaticResource Sub}"/>
+                    <TextBlock x:Name="FooterInfo" Text="等待游戏连接" Style="{StaticResource Sub}"
+                               VerticalAlignment="Center"/>
                 </StackPanel>
                 <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
-                    <TextBlock x:Name="PanelKeyHint" Text="F1 显隐" Style="{StaticResource Sub}" Margin="0,0,14,0"/>
-                    <TextBlock Text="Ctrl+F 搜索 · 拖标题移动窗口" Style="{StaticResource Sub}" Margin="0,0,14,0"/>
+                    <TextBlock x:Name="PanelKeyHint" Text="F1 显隐" Style="{StaticResource Sub}"
+                               Margin="0,0,14,0" VerticalAlignment="Center"/>
+                    <TextBlock Text="Ctrl+F 搜索 · 拖标题移动窗口" Style="{StaticResource Sub}"
+                               Margin="0,0,14,0" VerticalAlignment="Center"/>
                     <ToggleButton x:Name="RestoreToggle" Content="记住上次设置" Style="{StaticResource ChipStyle}"
-                                  FontSize="11" Padding="10,3" Margin="0,0,12,0"
+                                  Height="25" FontSize="11.5" Padding="10,0" Margin="0,0,12,0"
+                                  VerticalAlignment="Center"
                                   Click="RestoreToggle_Click"
                                   ToolTip="开启：下次打开修改器时，自动套用上次的开关与数值。关闭：每次启动都是全部关闭的干净状态。"/>
-                    <TextBlock x:Name="SaveHint" Text="状态已自动保存" Style="{StaticResource Sub}"/>
+                    <TextBlock x:Name="SaveHint" Text="状态已自动保存" Style="{StaticResource Sub}"
+                               VerticalAlignment="Center"/>
                     <TextBlock Text="KuugaOOO" FontSize="10" Foreground="#4A3F4E" Margin="14,0,0,0"
                                VerticalAlignment="Center" IsHitTestVisible="False"/>
                 </StackPanel>

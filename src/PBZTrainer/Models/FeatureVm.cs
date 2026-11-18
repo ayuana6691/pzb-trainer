@@ -13,6 +13,7 @@ namespace PBZTrainer.Models
         private string _hotkey = "";
         private bool _isFavorite;
         private bool _isBusy;
+        private bool? _pendingToggle;
         private bool _isSupported = true;
         private string _reason = "";
         private bool _suspended;
@@ -44,12 +45,25 @@ namespace PBZTrainer.Models
                 {
                     _isEnabled = value;
                     Raise();
+                    Raise(nameof(ToggleChecked));
                     Raise(nameof(StateText));
                     Raise(nameof(ShowNotApplied));
                     Raise(nameof(Tooltip));
                 }
             }
         }
+
+        /// <summary>开关显示请求目标，IsEnabled 保留已确认状态供同步与保存使用。</summary>
+        public bool ToggleChecked
+        {
+            get => _pendingToggle ?? IsEnabled;
+            set
+            {
+                if (HasToggle && !IsBusy && value != IsEnabled) ToggleRequested?.Invoke(value);
+            }
+        }
+
+        public event Action<bool> ToggleRequested;
 
         public string ValueText
         {
@@ -83,10 +97,18 @@ namespace PBZTrainer.Models
 
         public string FavoriteGlyph => _isFavorite ? "★" : "☆";
 
-        public bool IsBusy
+        public bool IsBusy => _isBusy;
+        public bool CanInteract => !_isBusy;
+
+        public void SetApplyState(bool busy, bool? toggleTarget = null)
         {
-            get => _isBusy;
-            set { if (_isBusy != value) { _isBusy = value; Raise(); } }
+            _isBusy = busy;
+            _pendingToggle = toggleTarget;
+            Raise(nameof(IsBusy));
+            Raise(nameof(CanInteract));
+            Raise(nameof(ToggleChecked));
+            Raise(nameof(StateText));
+            Raise(nameof(ShowNotApplied));
         }
 
         public bool IsSupported
@@ -141,7 +163,7 @@ namespace PBZTrainer.Models
         public bool HasExtraNote => !string.IsNullOrEmpty(_extraNote);
 
         /// <summary>卡片上是否显示「未生效」提示。</summary>
-        public bool ShowNotApplied => _isEnabled && !_applied && !IsAction;
+        public bool ShowNotApplied => !IsBusy && _isEnabled && !_applied && !IsAction;
         public bool IsSuspended { get => _suspended; set { if (_suspended != value) { _suspended = value; Raise(); } } }
 
         public string Reason
@@ -164,6 +186,12 @@ namespace PBZTrainer.Models
         {
             get
             {
+                if (IsBusy) return _pendingToggle switch
+                {
+                    true => "正在开启…",
+                    false => "正在关闭…",
+                    null => "正在应用…"
+                };
                 if (!_isSupported) return string.IsNullOrEmpty(_reason) ? "不支持" : _reason;
                 if (IsAction) return _isEnabled ? "已执行" : "";
                 if (!_isEnabled) return "已关闭";

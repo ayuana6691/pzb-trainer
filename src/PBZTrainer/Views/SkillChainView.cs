@@ -6,7 +6,6 @@ using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
-using System.Windows.Media;
 using PBZTrainer.Services;
 
 namespace PBZTrainer.Views
@@ -145,19 +144,7 @@ namespace PBZTrainer.Views
             hs.Setters.Add(new Setter(FrameworkElement.HeightProperty, 28.0));
             lv.Resources[typeof(GridViewColumnHeader)] = hs;
 
-            var itemStyle = new Style(typeof(ListViewItem));
-            itemStyle.Setters.Add(new Setter(Control.BackgroundProperty, Brushes.Transparent));
-            itemStyle.Setters.Add(new Setter(Control.ForegroundProperty, Ui.Brush("Text")));
-            itemStyle.Setters.Add(new Setter(Control.BorderThicknessProperty, new Thickness(0)));
-            itemStyle.Setters.Add(new Setter(Control.PaddingProperty, new Thickness(4, 2, 4, 2)));
-            var hover = new Trigger { Property = ListViewItem.IsMouseOverProperty, Value = true };
-            hover.Setters.Add(new Setter(Control.BackgroundProperty, Ui.Brush("Hover")));
-            itemStyle.Triggers.Add(hover);
-            var sel = new Trigger { Property = ListViewItem.IsSelectedProperty, Value = true };
-            sel.Setters.Add(new Setter(Control.BackgroundProperty, Ui.Brush("Accent")));
-            sel.Setters.Add(new Setter(Control.ForegroundProperty, Brushes.White));
-            itemStyle.Triggers.Add(sel);
-            lv.ItemContainerStyle = itemStyle;
+            lv.ItemContainerStyle = Ui.Style("GridViewRow");
         }
 
         private sealed class ChainStep

@@ -38,7 +38,10 @@ namespace PBZTrainer.Views
             _enable.Checked += (_, __) => _ = ToggleAsync(true);
             _enable.Unchecked += (_, __) => _ = ToggleAsync(false);
             _click = Ui.Chip("点击标记可传送", true, null, 11.5);
-            _click.Click += (_, __) => { if (_overlay.MinimapEnabled) _ = ToggleAsync(true); };
+            _click.Click += (_, __) =>
+            {
+                if (_overlay.MinimapEnabled) _ = ToggleAsync(true, applyingSettings: true);
+            };
             var right = Ui.Row(8, Ui.Sub("开启"), _enable, _click);
             right.HorizontalAlignment = HorizontalAlignment.Right;
             right.VerticalAlignment = VerticalAlignment.Center;
@@ -99,6 +102,7 @@ namespace PBZTrainer.Views
 
         private void Sync()
         {
+            if (_busy) return;
             _status.Text = _overlay.MinimapStatus;
             if (_overlay.MinimapEnabled != (_enable.IsChecked == true))
                 SyncSwitch(_overlay.MinimapEnabled);
@@ -111,26 +115,35 @@ namespace PBZTrainer.Views
             finally { _syncing = false; }
         }
 
-        private async Task ToggleAsync(bool enabled)
+        private async Task ToggleAsync(bool enabled, bool applyingSettings = false)
         {
             if (_busy || _syncing) return;
             _busy = true;
+            SwitchFeedback.SetIsLoading(_enable, true);
+            _enable.IsEnabled = _click.IsEnabled = false;
+            _status.Text = applyingSettings ? "正在应用…" : enabled ? "正在开启…" : "正在关闭…";
             try
             {
                 if (!_bridge.IsConnected)
                 {
                     _status.Text = "请先连接游戏";
-                    SyncSwitch(false);
                     return;
                 }
-                bool ok = await _overlay.SetMinimapAsync(enabled, _click.IsChecked == true);
-                if (!ok && enabled) SyncSwitch(false);
+                await _overlay.SetMinimapAsync(enabled, _click.IsChecked == true);
                 _status.Text = _overlay.MinimapStatus;
                 Ui.Log(_log, _overlay.MinimapStatus);
             }
+            catch (Exception ex)
+            {
+                _status.Text = "小地图操作失败：" + ex.Message;
+                Ui.Log(_log, _status.Text);
+            }
             finally
             {
+                SyncSwitch(_overlay.MinimapEnabled);
+                SwitchFeedback.SetIsLoading(_enable, false);
                 _busy = false;
+                _enable.IsEnabled = _click.IsEnabled = true;
             }
         }
     }

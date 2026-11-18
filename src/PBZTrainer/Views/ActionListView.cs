@@ -121,19 +121,7 @@ namespace PBZTrainer.Views
             hs.Setters.Add(new Setter(FrameworkElement.HeightProperty, 30.0));
             _list.Resources[typeof(GridViewColumnHeader)] = hs;
 
-            var itemStyle = new Style(typeof(ListViewItem));
-            itemStyle.Setters.Add(new Setter(Control.BackgroundProperty, Brushes.Transparent));
-            itemStyle.Setters.Add(new Setter(Control.ForegroundProperty, Ui.Brush("Text")));
-            itemStyle.Setters.Add(new Setter(Control.BorderThicknessProperty, new Thickness(0)));
-            itemStyle.Setters.Add(new Setter(Control.PaddingProperty, new Thickness(4, 3, 4, 3)));
-            var hover = new Trigger { Property = ListViewItem.IsMouseOverProperty, Value = true };
-            hover.Setters.Add(new Setter(Control.BackgroundProperty, Ui.Brush("Hover")));
-            itemStyle.Triggers.Add(hover);
-            var sel = new Trigger { Property = ListViewItem.IsSelectedProperty, Value = true };
-            sel.Setters.Add(new Setter(Control.BackgroundProperty, Ui.Brush("Accent")));
-            sel.Setters.Add(new Setter(Control.ForegroundProperty, Brushes.White));
-            itemStyle.Triggers.Add(sel);
-            _list.ItemContainerStyle = itemStyle;
+            _list.ItemContainerStyle = Ui.Style("GridViewRow");
             _list.SelectionChanged += (_, __) => { if (_list.SelectedItem is CatalogRow r) ShowDetail(r); };
             listPanel.Child = _list;
             body.Children.Add(listPanel);

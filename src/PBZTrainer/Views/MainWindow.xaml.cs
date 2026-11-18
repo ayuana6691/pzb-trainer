@@ -50,7 +50,6 @@ namespace PBZTrainer.Views
         private FeatureVm _hotkeyTarget;
         private bool _capturingPanelKey;
         private DateTime _lastAutoConnect = DateTime.MinValue;
-        private int _syncDepth;
         private readonly Dictionary<string, FrameworkElement> _views = new();
 
         public MainWindow()
@@ -94,10 +93,12 @@ namespace PBZTrainer.Views
 
             foreach (var vm in _all)
             {
+                vm.ToggleRequested += target => _ = ApplyAsync(vm, target);
                 vm.PropertyChanged += (_, args) =>
                 {
-                    ScheduleSave();
-                    if (args.PropertyName == nameof(FeatureVm.IsEnabled)) OnToggleChanged(vm);
+                    if (args.PropertyName is nameof(FeatureVm.IsEnabled) or nameof(FeatureVm.ValueText)
+                        or nameof(FeatureVm.Hotkey) or nameof(FeatureVm.IsFavorite))
+                        ScheduleSave();
                 };
             }
 
@@ -173,7 +174,7 @@ namespace PBZTrainer.Views
                     _views.Clear();
                     if (PageHost.Visibility == Visibility.Visible && !IsFeatureTab(_tab))
                         PageHost.Content = GetView(_tab);
-                    Sync(() => _bridge.ApplyStates(_all));
+                    SyncFeatureStates();
                     RebuildHotkeys();
                     ShowToast(_bridge.GateOk
                         ? "已连接游戏 · " + (_bridge.Ready ? "角色状态就绪" : "请进入存档")
@@ -265,8 +266,8 @@ namespace PBZTrainer.Views
             {
                 try
                 {
-                    await _bridge.RefreshAsync();
-                    Sync(() => _bridge.ApplyStates(_all));
+                    if (await _bridge.RefreshAsync() != null)
+                        SyncFeatureStates();
                 }
                 catch
                 {
@@ -731,19 +732,9 @@ namespace PBZTrainer.Views
             ApplyFilter();
         }
 
-        /// <summary>开关状态变化（鼠标、键盘、UIA、热键都会走这里）。</summary>
-        private void OnToggleChanged(FeatureVm vm)
-        {
-            if (_syncDepth > 0 || vm.IsBusy || vm.IsAction) return;
-            _ = ApplyAsync(vm, vm.IsEnabled);
-        }
-
-        private void Sync(Action action)
-        {
-            _syncDepth++;
-            try { action(); }
-            finally { _syncDepth--; }
-        }
+        // 轮询只回填空闲卡片。本次操作自己的回读可以确认正在等待的卡片。
+        private void SyncFeatureStates(FeatureVm completed = null)
+            => _bridge.ApplyStates(_all.Where(vm => !vm.IsBusy || vm == completed));
 
         private async void Action_Click(object sender, RoutedEventArgs e)
         {
@@ -751,7 +742,7 @@ namespace PBZTrainer.Views
 
             if (vm.IsAction)
             {
-                await ApplyAsync(vm, true);
+                await ApplyAsync(vm);
                 return;
             }
 
@@ -763,57 +754,71 @@ namespace PBZTrainer.Views
 
         private void Step(object sender, bool up)
         {
-            if (((FrameworkElement)sender).DataContext is not FeatureVm vm) return;
+            if (((FrameworkElement)sender).DataContext is not FeatureVm vm || vm.IsBusy) return;
             double v = vm.NumericValue;
             double step = v < 1 ? 0.1 : v < 10 ? 1 : v < 100 ? 5 : 100;
             v = Math.Max(0, up ? v + step : v - step);
             vm.ValueText = v.ToString("0.####", System.Globalization.CultureInfo.InvariantCulture);
-            ScheduleSave();
-            if (vm.IsEnabled && !vm.IsAction) _ = ApplyAsync(vm, true);
+            if (vm.IsEnabled && !vm.IsAction) _ = ApplyAsync(vm);
+        }
+
+        private void ValueBox_GotKeyboardFocus(object sender, KeyboardFocusChangedEventArgs e)
+        {
+            var input = (TextBox)sender;
+            input.Tag = input.Text;
         }
 
         private void ValueBox_KeyDown(object sender, KeyEventArgs e)
         {
-            if (e.Key == Key.Enter && ((FrameworkElement)sender).DataContext is FeatureVm vm)
-            {
-                Keyboard.ClearFocus();
-                if (vm.IsEnabled && !vm.IsAction) _ = ApplyAsync(vm, true);
-            }
+            if (e.Key != Key.Enter) return;
+            CommitValue((TextBox)sender);
+            Keyboard.ClearFocus();
+            e.Handled = true;
         }
 
-        private void ValueBox_LostFocus(object sender, RoutedEventArgs e)
+        private void ValueBox_LostKeyboardFocus(object sender, KeyboardFocusChangedEventArgs e)
         {
-            if (((FrameworkElement)sender).DataContext is FeatureVm vm && vm.IsEnabled && !vm.IsAction)
-                _ = ApplyAsync(vm, true);
-            ScheduleSave();
-        }
-
-        private async Task ApplyAsync(FeatureVm vm, bool target)
-        {
-            if (!_bridge.IsConnected)
-            {
-                Sync(() => vm.IsEnabled = false);
-                ShowToast("请先连接游戏");
-                await AutoConnectAsync();
+            var input = (TextBox)sender;
+            // 点击同一卡片的开关或微调按钮时，接下来的请求会一并提交输入值。
+            if (e.NewFocus is FrameworkElement control && control.DataContext == input.DataContext &&
+                control.IsMouseOver && Mouse.LeftButton == MouseButtonState.Pressed &&
+                control.Name is "FeatureSwitch" or "StepDown" or "StepUp")
                 return;
-            }
+            CommitValue(input);
+        }
 
+        private void CommitValue(TextBox input)
+        {
+            if (input.DataContext is not FeatureVm vm || Equals(input.Tag, vm.ValueText)) return;
+            input.Tag = vm.ValueText;
+            if (vm.IsEnabled && !vm.IsAction) _ = ApplyAsync(vm);
+        }
+
+        private async Task ApplyAsync(FeatureVm vm, bool? toggleTarget = null)
+        {
             if (vm.IsBusy) return;
-
-            bool previous = !target;
-            vm.IsBusy = true;
+            vm.SetApplyState(true, toggleTarget);
 
             try
             {
-                var result = await _bridge.ApplyFeatureAsync(vm);
+                if (!_bridge.IsConnected)
+                {
+                    ShowToast("请先连接游戏");
+                    await AutoConnectAsync();
+                    if (_bridge.IsConnected) SyncFeatureStates(vm);
+                    return;
+                }
+
+                bool target = toggleTarget ?? vm.IsEnabled;
+                var result = await _bridge.ApplyFeatureAsync(vm, target);
 
                 if (result == null || !BridgeClient.IsTrue(result["ok"]))
                 {
-                    Sync(() => vm.IsEnabled = previous);
                     ShowToast(vm.Title + " · " + (Str(result?["message"]) ?? "未能应用"));
                     return;
                 }
 
+                string message;
                 if (vm.Info.IsCollection)
                 {
                     int steps = 0;
@@ -823,29 +828,28 @@ namespace PBZTrainer.Views
                         Dispatcher.Invoke(() => ShowToast($"{vm.Title} · 处理中 {n} 步", 1.2));
                     }, CancellationToken.None);
                     bool ok = last != null && BridgeClient.IsTrue(last["ok"]);
-                    ShowToast(vm.Title + " · " + (ok ? $"已完成 {steps} 步" : "收集操作已中止，已完成的部分请在游戏中核对"));
+                    message = ok ? $"已完成 {steps} 步" : "收集操作已中止，已完成的部分请在游戏中核对";
                 }
                 else
                 {
-                    ShowToast(vm.Title + " · " + (Str(result["message"]) ?? "已应用"));
+                    message = Str(result["message"]) ?? "已应用";
                 }
 
-                Sync(() =>
-                {
-                    if (result["enabled"] != null) vm.IsEnabled = BridgeClient.IsTrue(result["enabled"]);
-                });
-                await _bridge.RefreshAsync();
-                Sync(() => _bridge.ApplyStates(_all));
+                if (result["enabled"] != null) vm.IsEnabled = BridgeClient.IsTrue(result["enabled"]);
+                else if (toggleTarget.HasValue) vm.IsEnabled = target;
+
+                if (await _bridge.RefreshAsync() != null)
+                    SyncFeatureStates(vm);
+
+                ShowToast(vm.Title + " · " + message);
             }
             catch (Exception ex)
             {
-                Sync(() => vm.IsEnabled = previous);
                 ShowToast(vm.Title + " · " + ex.Message);
             }
             finally
             {
-                vm.IsBusy = false;
-                ScheduleSave();
+                vm.SetApplyState(false);
             }
         }
 
@@ -890,8 +894,9 @@ namespace PBZTrainer.Views
                 var captured = vm;
                 _hotkeys.Register(vm.Hotkey, () => Dispatcher.BeginInvoke(new Action(() =>
                 {
+                    if (captured.IsBusy) return;
                     if (!_bridge.IsConnected) { ShowToast("请先连接游戏"); return; }
-                    captured.IsEnabled = !captured.IsEnabled;
+                    captured.ToggleChecked = !captured.IsEnabled;
                 })));
             }
         }

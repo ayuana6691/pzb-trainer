@@ -19,6 +19,7 @@ namespace PBZTrainer.Views
         private readonly TextBlock _status = Ui.Sub("透视未开启");
         private readonly TextBlock _stats = Ui.Sub("");
         private readonly ToggleButton _enable;
+        private readonly Button _applySettings;
         private readonly Dictionary<string, ToggleButton> _flags = new();
         private readonly Dictionary<string, TextBox> _numbers = new();
         private bool _busy;
@@ -96,8 +97,9 @@ namespace PBZTrainer.Views
             }
             form.Children.Add(Ui.Sub("参数"));
             form.Children.Add(grid);
-            form.Children.Add(Ui.Row(8,
-                Ui.Button("应用设置", () => _ = ApplyAsync(), "AccentBtn", 28, 92, 11.5),
+            _applySettings = Ui.Button("应用设置", () => _ = ToggleAsync(true, applyingSettings: true),
+                "AccentBtn", 28, 92, 11.5);
+            form.Children.Add(Ui.Row(8, _applySettings,
                 Ui.Button("刷新状态", () => _ = RefreshAsync(), "Ghost", 28, 84, 11.5)));
 
             var left = Ui.Panel(new ScrollViewer
@@ -124,6 +126,7 @@ namespace PBZTrainer.Views
 
         private void Sync()
         {
+            if (_busy) return;
             _status.Text = _overlay.EspStatus;
             if (_overlay.EspEnabled != (_enable.IsChecked == true))
                 SyncSwitch(_overlay.EspEnabled);
@@ -152,35 +155,42 @@ namespace PBZTrainer.Views
             return s;
         }
 
-        private async Task ToggleAsync(bool enabled)
+        private async Task ToggleAsync(bool enabled, bool applyingSettings = false)
         {
             if (_busy || _syncing) return;
+            if (applyingSettings && !_overlay.EspEnabled)
+            {
+                Ui.Log(_log, "请先打开透视开关");
+                return;
+            }
+
             _busy = true;
+            SwitchFeedback.SetIsLoading(_enable, true);
+            _enable.IsEnabled = _applySettings.IsEnabled = false;
+            _status.Text = applyingSettings ? "正在应用…" : enabled ? "正在开启…" : "正在关闭…";
             try
             {
                 if (!_bridge.IsConnected)
                 {
                     _status.Text = "请先连接游戏";
-                    SyncSwitch(false);
                     return;
                 }
                 bool ok = await _overlay.SetEspAsync(BuildSettings(), enabled);
-                if (!ok && enabled) SyncSwitch(false);
                 _status.Text = _overlay.EspStatus;
-                Ui.Log(_log, _overlay.EspStatus);
+                Ui.Log(_log, applyingSettings && ok ? "设置已应用" : _overlay.EspStatus);
             }
-            finally { _busy = false; }
-        }
-
-        private async Task ApplyAsync()
-        {
-            if (!_overlay.EspEnabled)
+            catch (Exception ex)
             {
-                Ui.Log(_log, "请先打开透视开关");
-                return;
+                _status.Text = "透视操作失败：" + ex.Message;
+                Ui.Log(_log, _status.Text);
             }
-            bool ok = await _overlay.SetEspAsync(BuildSettings(), true);
-            Ui.Log(_log, ok ? "设置已应用" : _overlay.EspStatus);
+            finally
+            {
+                SyncSwitch(_overlay.EspEnabled);
+                SwitchFeedback.SetIsLoading(_enable, false);
+                _busy = false;
+                _enable.IsEnabled = _applySettings.IsEnabled = true;
+            }
         }
 
         private async Task RefreshAsync()

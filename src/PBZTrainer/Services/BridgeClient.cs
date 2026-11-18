@@ -269,13 +269,13 @@ namespace PBZTrainer.Services
             }
         }
 
-        public async Task<JsonObject> ApplyFeatureAsync(FeatureVm vm, CancellationToken ct = default)
+        public async Task<JsonObject> ApplyFeatureAsync(FeatureVm vm, bool enabled, CancellationToken ct = default)
         {
             var req = new JsonObject
             {
                 ["command"] = "feature",
                 ["id"] = vm.Id,
-                ["enabled"] = vm.IsEnabled,
+                ["enabled"] = enabled,
                 ["value"] = vm.NumericValue
             };
             return await RequestAsync(req, ct);

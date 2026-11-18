@@ -5,6 +5,7 @@ using System.Text.Json.Nodes;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
+using System.Windows.Automation;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
 using System.Windows.Data;
@@ -166,10 +167,9 @@ namespace PBZTrainer.Views
             _catScroll = new ScrollViewer
             {
                 Content = _categoryBar,
-                HorizontalScrollBarVisibility = ScrollBarVisibility.Auto,
+                HorizontalScrollBarVisibility = ScrollBarVisibility.Hidden,
                 VerticalScrollBarVisibility = ScrollBarVisibility.Disabled,
-                Padding = new Thickness(0, 0, 2, 2),
-                Margin = new Thickness(0, 0, 2, 0)
+                VerticalAlignment = VerticalAlignment.Center
             };
             _catScroll.PreviewMouseWheel += (_, e) =>
             {
@@ -181,6 +181,10 @@ namespace PBZTrainer.Views
             catPrev.ToolTip = "向左滚动分类（也可直接滚鼠标滚轮）";
             var catNext = Ui.Button("›", () => ScrollCats(260), "Ghost", 26, 26, 14);
             catNext.ToolTip = "向右滚动分类（也可直接滚鼠标滚轮）";
+            AutomationProperties.SetName(catPrev, "向左滚动分类");
+            AutomationProperties.SetName(catNext, "向右滚动分类");
+            catPrev.VerticalAlignment = VerticalAlignment.Center;
+            catNext.VerticalAlignment = VerticalAlignment.Center;
             catPrev.Padding = new Thickness(0);
             catNext.Padding = new Thickness(0);
             catPrev.Margin = new Thickness(0, 0, 6, 0);
@@ -274,19 +278,7 @@ namespace PBZTrainer.Views
             hs.Setters.Add(new Setter(FrameworkElement.HeightProperty, 30.0));
             _list.Resources[typeof(GridViewColumnHeader)] = hs;
 
-            var itemStyle = new Style(typeof(ListViewItem));
-            itemStyle.Setters.Add(new Setter(BackgroundProperty, Brushes.Transparent));
-            itemStyle.Setters.Add(new Setter(Control.ForegroundProperty, Ui.Brush("Text")));
-            itemStyle.Setters.Add(new Setter(Control.BorderThicknessProperty, new Thickness(0)));
-            itemStyle.Setters.Add(new Setter(Control.PaddingProperty, new Thickness(4, 3, 4, 3)));
-            var hover = new Trigger { Property = ListViewItem.IsMouseOverProperty, Value = true };
-            hover.Setters.Add(new Setter(BackgroundProperty, Ui.Brush("Hover")));
-            itemStyle.Triggers.Add(hover);
-            var sel = new Trigger { Property = ListViewItem.IsSelectedProperty, Value = true };
-            sel.Setters.Add(new Setter(BackgroundProperty, Ui.Brush("Accent")));
-            sel.Setters.Add(new Setter(Control.ForegroundProperty, Brushes.White));
-            itemStyle.Triggers.Add(sel);
-            _list.ItemContainerStyle = itemStyle;
+            _list.ItemContainerStyle = Ui.Style("GridViewRow");
             _list.SelectionChanged += (_, __) =>
             {
                 if (_list.SelectedItem is CatalogRow row) ShowDetail(row);
@@ -704,6 +696,7 @@ namespace PBZTrainer.Views
                         child.IsChecked = (string)child.Content == _categoryValue;
                     ApplyFilter();
                 }, 11.5);
+                btn.VerticalAlignment = VerticalAlignment.Center;
                 if (c != _categoryValue) btn.IsChecked = false;
                 _categoryBar.Children.Add(btn);
             }
