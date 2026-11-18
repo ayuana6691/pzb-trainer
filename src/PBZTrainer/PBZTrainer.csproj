@@ -12,11 +12,12 @@
     <PlatformTarget>x64</PlatformTarget>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <SatelliteResourceLanguages>zh-Hans</SatelliteResourceLanguages>
-    <Version>1.11.16</Version>
-    <AssemblyVersion>1.11.16.0</AssemblyVersion>
-    <FileVersion>1.11.16.0</FileVersion>
-    <!-- 可选：把游戏组件打进 exe（发布单文件版用）。默认不打包。 -->
-    <EmbedBridge Condition="'$(EmbedBridge)' == ''">false</EmbedBridge>
+    <!-- 版本号唯一来源：本地打包取这里的值，CI 用 tag 覆盖（-p:Version=x.y.z）。
+         AssemblyVersion / FileVersion 由 SDK 从 Version 派生，不再单独写死。 -->
+    <Version>1.11.17</Version>
+    <!-- 把运行模块打进 exe：默认开启，产物单文件双击即用。
+         只做界面预览时用 -p:EmbedBridge=false 关掉。 -->
+    <EmbedBridge Condition="'$(EmbedBridge)' == ''">true</EmbedBridge>
     <BridgeDll Condition="'$(BridgeDll)' == ''">$(MSBuildThisFileDirectory)Data\PBZBridge.dll</BridgeDll>
     <Product>影之刃零修改器</Product>
     <Company>初五助手</Company>
@@ -29,5 +30,11 @@
     <EmbeddedResource Include="$(BridgeDll)" LogicalName="PBZBridge.dll"
                       Condition="'$(EmbedBridge)' == 'true' And Exists('$(BridgeDll)')" />
   </ItemGroup>
+
+  <!-- 要求内嵌却找不到模块时给出显式警告，避免又出现「程序里没有内置运行模块」的包。 -->
+  <Target Name="ReportBridgeState" BeforeTargets="PrepareForBuild">
+    <Warning Condition="'$(EmbedBridge)' == 'true' And !Exists('$(BridgeDll)')"
+             Text="EmbedBridge=true 但没找到运行模块 $(BridgeDll)。本次产物不含运行模块，只能浏览界面；发布包请先把 PBZBridge.dll 放到 src\PBZTrainer\Data\ 目录再打包。" />
+  </Target>
 
 </Project>

@@ -1,74 +1,136 @@
-name: Windows build and preview release
+name: Release build and publish
+
+# 只在推 tag（v1.2.3）时构建，构建产物直接上传到同名 Release。
+# 刻意不使用 actions/upload-artifact：workflow artifact 会占用账号存储额度，
+# Release 资产不占。发版方式：改版本 -> 提交 -> 打 tag -> push tag。
 
 on:
   push:
-    branches: [main]
     tags: ['v*']
-  pull_request:
-    branches: [main]
   workflow_dispatch:
+    inputs:
+      tag:
+        description: '重建用的 tag（形如 v1.11.17，必须已存在）'
+        required: true
+        type: string
 
 permissions:
-  contents: read
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref_name }}
+  cancel-in-progress: false
+
+env:
+  KEEP_RELEASES: '3'
 
 jobs:
-  build:
+  release:
     runs-on: windows-latest
-    timeout-minutes: 20
+    timeout-minutes: 40
+
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
-      - uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
+      - name: Set up .NET 8
+        uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
         with:
           dotnet-version: '8.0.x'
 
-      - name: Publish Windows x64 UI preview
+      - name: Resolve version from tag
+        id: ver
         shell: pwsh
+        env:
+          REF_NAME: ${{ github.ref_name }}
+          INPUT_TAG: ${{ inputs.tag }}
         run: |
-          dotnet publish src/PBZTrainer/PBZTrainer.csproj -c Release -r win-x64 --self-contained true `
-            -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true `
-            -p:EnableCompressionInSingleFile=true -p:DebugType=none -p:EmbedBridge=false -o out/ci
+          $tag = if ($env:INPUT_TAG) { $env:INPUT_TAG.Trim() } else { $env:REF_NAME }
+          if ($tag -notmatch '^[vV]?(\d+\.\d+\.\d+)$') {
+            throw "tag 必须形如 v1.2.3，实际拿到 '$tag'"
+          }
+          "tag=$tag"           >> $env:GITHUB_OUTPUT
+          "version=$($Matches[1])" >> $env:GITHUB_OUTPUT
+          Write-Host "tag = $tag / version = $($Matches[1])"
+
+      - name: Package
+        shell: pwsh
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
+        run: |
+          ./pack.ps1 -OutRoot out/ci -NoBridge -Version $env:VERSION
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-          $asset = 'PBZTrainer-UI-preview-win-x64.zip'
-          Compress-Archive -LiteralPath 'out/ci/PBZTrainer.exe', 'LICENSE', 'NOTICE.md' `
-            -DestinationPath "out/ci/$asset" -CompressionLevel NoCompression
-          $hash = (Get-FileHash -LiteralPath "out/ci/$asset" -Algorithm SHA256).Hash.ToLowerInvariant()
-          Set-Content -LiteralPath 'out/ci/SHA256SUMS.txt' -Encoding ascii -NoNewline -Value "$hash  $asset`n"
-
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: PBZTrainer-UI-preview-win-x64
-          path: |
-            out/ci/PBZTrainer-UI-preview-win-x64.zip
-            out/ci/SHA256SUMS.txt
-          if-no-files-found: error
-          compression-level: 0
-          retention-days: 14
-
-  release:
-    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
-    needs: build
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        with:
-          name: PBZTrainer-UI-preview-win-x64
-          path: release
-
-      - name: Publish tagged GitHub prerelease
-        shell: bash
-        working-directory: release
+      - name: Publish release
+        shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
+          TAG: ${{ steps.ver.outputs.tag }}
+          VERSION: ${{ steps.ver.outputs.version }}
         run: |
-          sha256sum --check SHA256SUMS.txt
-          gh release create "$GITHUB_REF_NAME" PBZTrainer-UI-preview-win-x64.zip SHA256SUMS.txt \
-            --verify-tag --prerelease --title "$GITHUB_REF_NAME · Windows UI 预览" \
-            --notes 'Windows x64 UI 预览包，自带 .NET 运行时。运行模块需要单独提供。'
+          $zip = "out/ci/PBZTrainer-v$env:VERSION-UI-preview-win-x64.zip"
+          $sums = 'out/ci/SHA256SUMS.txt'
+          if (-not (Test-Path $zip))  { throw "没找到 $zip" }
+          if (-not (Test-Path $sums)) { throw "没找到 $sums" }
+
+          $sumLine = (Get-Content $sums -Encoding utf8 | Select-Object -First 1)
+          $notes = @(
+            "## $env:TAG"
+            ''
+            '**Windows x64 · 单文件 · 免安装**'
+            ''
+            '| 项目 | 值 |'
+            '|---|---|'
+            "| 版本（取自 tag） | $($env:VERSION) |"
+            '| 构建 | GitHub Actions · .NET 8 self-contained |'
+            '| 自带 .NET 运行时 | 是（对方机器不用装 .NET） |'
+            '| 内嵌运行模块 | 否 —— CI 拿不到 PBZBridge.dll |'
+            ''
+            '这是自动构建的**界面预览包**：能启动、能浏览所有页面；连接游戏需要单独提供运行模块。'
+            '要「双击即用」的完整包，在有 `PBZBridge.dll` 的机器上跑 `build.cmd`。'
+            ''
+            '校验和：'
+            ''
+            '```'
+            $sumLine
+            '```'
+            ''
+            "构建记录：$env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID"
+          ) -join "`n"
+          Set-Content -LiteralPath 'out/ci/RELEASE-NOTES.md' -Value $notes -Encoding utf8
+
+          # 同一 tag 重跑时先删掉旧 Release（保留 tag），避免资产叠加
+          gh release view $env:TAG --repo $env:GITHUB_REPOSITORY *> $null
+          if ($LASTEXITCODE -eq 0) {
+            Write-Host "Release $env:TAG 已存在，先删除"
+            gh release delete $env:TAG --yes --repo $env:GITHUB_REPOSITORY
+            if ($LASTEXITCODE -ne 0) { throw "删除已存在的 Release 失败" }
+          }
+          gh release create $env:TAG $zip $sums --verify-tag --latest `
+            --title $env:TAG --notes-file 'out/ci/RELEASE-NOTES.md' --repo $env:GITHUB_REPOSITORY
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Keep only the newest releases
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $keep = [int]$env:KEEP_RELEASES
+          $raw = gh release list --limit 200 --repo $env:GITHUB_REPOSITORY --json tagName,createdAt
+          if ($LASTEXITCODE -ne 0) { throw 'gh release list 失败，无法清理旧版本' }
+          $all = $raw | ConvertFrom-Json
+          $ordered = @($all | Sort-Object { [datetime]$_.createdAt } -Descending)
+          $drop = @($ordered | Select-Object -Skip $keep)
+          if ($drop.Count -eq 0) {
+            Write-Host "共 $($ordered.Count) 个 release，未超过 $keep，不清理"
+            exit 0
+          }
+          foreach ($r in $drop) {
+            Write-Host "删除旧 release: $($r.tagName)  ($($r.createdAt))"
+            gh release delete $r.tagName --yes --repo $env:GITHUB_REPOSITORY
+            if ($LASTEXITCODE -ne 0) { throw "删除 $($r.tagName) 失败" }
+          }
+          $kept = @($ordered | Select-Object -First $keep | ForEach-Object { $_.tagName })
+          Write-Host "保留：$($kept -join ', ')"

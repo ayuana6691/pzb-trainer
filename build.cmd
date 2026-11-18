@@ -1,18 +1,26 @@
 @echo off
-rem 需要 .NET 8 SDK（Windows）
+rem One-click packaging:
+rem   self-contained .NET 8 runtime + embedded bridge -> single exe, double-click to run.
+rem Requires the .NET 8 SDK; pack.ps1 prints the install steps when it is missing.
+rem Keep this file ASCII-only: cmd.exe mis-parses UTF-8 batch files after chcp 65001.
 setlocal
 pushd "%~dp0"
-dotnet publish "src\PBZTrainer\PBZTrainer.csproj" -c Release -r win-x64 --self-contained true ^
-  -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true ^
-  -p:EnableCompressionInSingleFile=true -p:DebugType=none -o out
+
+where pwsh >nul 2>nul
 if errorlevel 1 (
-  echo.
-  echo 构建失败，请确认已安装 .NET 8 SDK：https://dotnet.microsoft.com/download
+  powershell -NoProfile -ExecutionPolicy Bypass -File "pack.ps1" %*
 ) else (
-  echo.
-  echo 完成：out\PBZTrainer.exe
-  echo 记得把 PBZBridge.dll 放到 out\ 目录下再运行。
+  pwsh -NoProfile -ExecutionPolicy Bypass -File "pack.ps1" %*
 )
+set "RC=%ERRORLEVEL%"
+
+echo.
+if "%RC%"=="0" (
+  echo [OK] out\release\PBZTrainer.exe   single file, double-click to run
+) else (
+  echo [FAIL] packaging failed, exit code %RC% -- see the log above
+)
+
 popd
-endlocal
-pause
+if /i not "%CI%"=="true" pause
+endlocal & exit /b %RC%

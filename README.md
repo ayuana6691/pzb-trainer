@@ -94,21 +94,45 @@
 
 ## 构建
 
-需要 .NET 8 SDK（Windows）：
+需要 .NET 8 SDK（Windows）。打包前确认运行模块在位：`src\PBZTrainer\Data\PBZBridge.dll`。
 
-```bat
-dotnet publish src\PBZTrainer\PBZTrainer.csproj -c Release -r win-x64 --self-contained true ^
-  -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true ^
-  -p:EnableCompressionInSingleFile=true -p:DebugType=none -o out
+双击 `build.cmd`，或：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File pack.ps1
 ```
 
-产物 `out\PBZTrainer.exe` 约 66 MB，单文件、免安装。
+`pack.ps1` 一次做完：`dotnet publish`（`--self-contained true` + 单文件）→ 内嵌运行模块 → 自检 → 组装发布目录 → 打 zip。自检覆盖三项：单文件 bundle 头可解析、包里带 .NET 运行时与 WPF 原生库（`System.Private.CoreLib.dll` / `PresentationFramework.dll` / `wpfgfx_cor3.dll` / `vcruntime140_cor3.dll`）、内嵌模块的 SHA-256 与 `Data\PBZBridge.dll` 一致。任一项不过就以退出码 1 结束，不产出半成品包。
 
-### GitHub Actions 自动构建与发布
+产物：
 
-- 推送到 `main`、向 `main` 提交 Pull Request 或手动运行工作流时，Windows 构建会把 `PBZTrainer-UI-preview-win-x64.zip` 和 SHA-256 校验文件上传到该次运行的 Artifacts，保留 14 天。
-- 将新 `v*` 标签推送到含此工作流的提交时，构建通过后会在当前仓库的 Releases 中创建同名预发行版。
-- 自动构建使用仓库源码和 .NET 8，产物包含 .NET 运行时。需要连接游戏时，请单独提供本地运行模块 `PBZBridge.dll`。
+| 路径 | 说明 |
+|---|---|
+| `out\release\PBZTrainer.exe` | 主程序，单文件、约 70 MB，双击即用 |
+| `out\release\` | 发布目录：exe + 使用说明.txt + 首次使用.txt + LICENSE + NOTICE.md + SHA256SUMS.txt |
+| `out\PBZTrainer-v<版本>-win-x64.zip` | 打好的压缩包（同目录另有 `SHA256SUMS.txt`） |
+
+只出界面预览包（不含运行模块，CI 用）：`pack.ps1 -NoBridge`，产物名为 `PBZTrainer-UI-preview-win-x64.zip`。带版本号出包用 `-Version 1.11.17`（tag 触发时 CI 就这么调，版本会写进 exe 的 FileVersion）。
+
+不要绕过脚本手写 `dotnet publish`：漏 `--self-contained true`，对方机器会提示缺少 .NET 运行时；漏 `-p:EmbedBridge=true`（工程默认已开），程序会弹「这个程序里没有内置运行模块」。
+
+### 发版流程（tag → Actions → Release）
+
+版本号唯一来源是 git tag：`src\PBZTrainer\PBZTrainer.csproj` 里的 `<Version>` 只决定本地打包的默认值，`AssemblyVersion` / `FileVersion` 由 SDK 从 `-p:Version=<tag>` 派生。
+
+```bat
+git tag v1.11.17
+git push origin v1.11.17
+```
+
+推 `v*` tag 后 [windows.yml](.github/workflows/windows.yml) 会：解析 tag 里的版本号 → `pack.ps1 -OutRoot out/ci -NoBridge -Version <版本>` → `gh release create` 把 zip 和 `SHA256SUMS.txt` 直接挂到同名 Release → 删掉第 4 个及更早的 Release（保留最新 3 个，tag 本身保留）。
+
+几个刻意的选择：
+
+- **不上传 workflow artifact**：artifact 会占用账号存储额度，Release 资产不占，所以构建结果只进 Release。
+- **只保留最新 3 个 Release**：`KEEP_RELEASES` 在工作流顶部，改数字即可。
+- 同一 tag 重跑会先删同名 Release 再重建（tag 不动），避免资产叠加；手动重跑用 `workflow_dispatch` 并填已存在的 tag。
+- CI 拿不到运行模块（`PBZBridge.dll` 不进版本库），所以 CI 产物是**预览包**（文件名带 `UI-preview`）：自带 .NET 运行时、能启动能浏览，连接游戏需要单独提供运行模块。要「双击即用」的完整包，在有 `PBZBridge.dll` 的机器上跑 `build.cmd`。
 
 ## 目录结构
 
