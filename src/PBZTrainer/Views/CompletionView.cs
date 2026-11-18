@@ -22,14 +22,13 @@ namespace PBZTrainer.Views
         private readonly BridgeClient _bridge;
         private readonly TextBox _log = Ui.LogBox(120);
         private readonly List<Item> _items = new();
-        private JsonNode _activeJob;
-        private string _activeKind;
+        private Item _activeItem;
+        internal bool IsRunning => _activeItem != null;
         private readonly List<string> _addedNames = new();
         private readonly List<string> _recordNames = new();
         private readonly List<string> _failedNames = new();
         private int _statChecked, _statAdded, _statRecords, _statFailures;
-        private bool _started;
-        private bool _stoppedByUser;
+        private bool _stopRequested;
 
         private static readonly (string Kind, string Title, string Desc)[] Kinds =
         {
@@ -77,13 +76,14 @@ namespace PBZTrainer.Views
         }
 
         private bool _loaded;
+        private int _planVersion;
 
         private UIElement BuildCard(string kind, string title, string desc)
         {
             var planText = Ui.Sub("尚未读取计划");
             var progress = Ui.Sub("");
             var run = Ui.Button("读取并执行", () => _ = RunAsync(kind), "AccentBtn", 30, 108, 12);
-            var stop = Ui.Button("停止", () => _ = StopAsync(kind), "Ghost", 30, 68, 12);
+            var stop = Ui.Button("停止", () => RequestStop(kind), "Ghost", 30, 68, 12);
             stop.IsEnabled = false;
 
             var head = new Grid();
@@ -107,12 +107,14 @@ namespace PBZTrainer.Views
 
         private async Task RefreshPlansAsync()
         {
+            int version = ++_planVersion;
             if (!_bridge.IsConnected) { Ui.Log(_log, "请先连接游戏"); return; }
             foreach (var it in _items)
             {
                 try
                 {
                     var r = await _bridge.CompletionPlanAsync(it.Kind);
+                    if (version != _planVersion) return;
                     if (!r.Flag("ok"))
                     {
                         it.PlanText.Text = "计划读取失败：" + (r.Str("message") ?? "");
@@ -125,6 +127,7 @@ namespace PBZTrainer.Views
                 }
                 catch (Exception ex)
                 {
+                    if (version != _planVersion) return;
                     it.PlanText.Text = "计划读取异常：" + ex.Message;
                 }
             }
@@ -132,34 +135,28 @@ namespace PBZTrainer.Views
 
         private async Task RunAsync(string kind)
         {
+            if (IsRunning) return;
             var it = _items.First(x => x.Kind == kind);
-            var owner = Window.GetWindow(this);
-            var answer = owner != null
-                ? MessageBox.Show(owner,
-                    $"确认执行「{it.Title}」？\n\n会真实修改当前存档进度，关闭修改器不会撤销，建议先自行备份存档。",
-                    "一键全收集", MessageBoxButton.OKCancel, MessageBoxImage.Warning)
-                : MessageBox.Show(
-                    $"确认执行「{it.Title}」？\n\n会真实修改当前存档进度，关闭修改器不会撤销，建议先自行备份存档。",
-                    "一键全收集", MessageBoxButton.OKCancel, MessageBoxImage.Warning);
-            if (answer != MessageBoxResult.OK) { Ui.Log(_log, "已取消：" + it.Title); return; }
-
-            it.Run.IsEnabled = false;
-            it.Stop.IsEnabled = true;
-            it.ProgressText.Foreground = Ui.Brush("Jade");
-            it.ProgressText.Text = "正在开始…";
+            _activeItem = it;
+            foreach (var card in _items) card.Run.IsEnabled = false;
+            bool confirmed = false;
+            bool started = false;
             try
             {
+                var owner = Window.GetWindow(this);
+                string prompt = $"确认执行「{it.Title}」？\n\n会真实修改当前存档进度，关闭修改器不会撤销，建议先自行备份存档。";
+                var answer = owner != null
+                    ? MessageBox.Show(owner, prompt, "一键全收集", MessageBoxButton.OKCancel, MessageBoxImage.Warning)
+                    : MessageBox.Show(prompt, "一键全收集", MessageBoxButton.OKCancel, MessageBoxImage.Warning);
+                if (answer != MessageBoxResult.OK) { Ui.Log(_log, "已取消：" + it.Title); return; }
+
+                confirmed = true;
+                it.Stop.IsEnabled = true;
+                it.ProgressText.Foreground = Ui.Brush("Jade");
+                it.ProgressText.Text = "正在开始…";
                 Ui.Log(_log, "开始：" + it.Title);
-
-                // 上一次没跑完的任务先停掉，否则 begin 会被拒绝
-                if (_activeJob != null)
-                {
-                    try { await _bridge.CompletionCancelAsync(_activeJob); } catch { }
-                    _activeJob = null;
-                }
-
                 var begin = await _bridge.CompletionBeginAsync(kind);
-                if (!begin.Flag("ok") && begin["job"] == null)
+                if (!begin.Flag("ok") && begin?["job"] == null)
                 {
                     string why = begin.Str("message") ?? "未知原因";
                     it.ProgressText.Foreground = Ui.Brush("Warn");
@@ -177,17 +174,16 @@ namespace PBZTrainer.Views
                     return;
                 }
 
-                _activeJob = job;
-                _activeKind = kind;
-                _started = true;
-                _stoppedByUser = false;
+                started = true;
+                _statChecked = (int)begin["processed"].Num();
+                _statAdded = _statRecords = _statFailures = 0;
                 _addedNames.Clear(); _recordNames.Clear(); _failedNames.Clear();
                 int total = (int)begin["total"].Num();
-                int processed = (int)begin["processed"].Num();
-                it.ProgressText.Text = $"已检查 {processed}/{total}";
+                int processed = _statChecked;
+                if (!_stopRequested) it.ProgressText.Text = $"已检查 {processed}/{total}";
 
                 var result = begin;
-                for (int i = 0; i < 4000; i++)
+                for (int i = 0; i < 4000 && !_stopRequested; i++)
                 {
                     if (!_bridge.IsConnected)
                     {
@@ -198,29 +194,30 @@ namespace PBZTrainer.Views
                     }
 
                     await Task.Delay(120);
-                    result = await _bridge.CompletionStepAsync(_activeJob);
-                    if (result == null) { Ui.Log(_log, "未收到结果，已停止"); return; }
-
-                    if (!result.Flag("ok") && result["processed"] == null)
+                    if (_stopRequested) break;
+                    var step = await _bridge.CompletionStepAsync(job);
+                    if (!step.Flag("ok") && step?["processed"] == null)
                     {
-                        string why = result.Str("message") ?? "未确认";
+                        if (_stopRequested) break;
+                        string why = step.Str("message") ?? (step == null ? "未收到结果" : "未确认");
                         it.ProgressText.Foreground = Ui.Brush("Warn");
                         it.ProgressText.Text = "已停止：" + why;
                         Ui.Log(_log, "已停止：" + why);
                         return;
                     }
 
+                    result = step;
                     processed = (int)result["processed"].Num(processed);
                     total = (int)result["total"].Num(total);
                     int added = (int)result["added"].Num();
                     int records = (int)result["records"].Num();
-                    int done = (int)result["done"].Num();
                     int failures = result["failures"] is JsonArray fa ? fa.Count : 0;
 
                     _statChecked = processed; _statAdded = added; _statRecords = records; _statFailures = failures;
                     CollectStep(result);
 
-                    it.ProgressText.Text = $"已检查 {processed}/{total}　补齐 {added}　仅记录 {records}　未完成 {failures}";
+                    if (!_stopRequested)
+                        it.ProgressText.Text = $"已检查 {processed}/{total}　补齐 {added}　仅记录 {records}　未完成 {failures}";
                     if (processed % 20 == 0 || added > 0)
                         Ui.Log(_log, $"进度 {processed}/{total} · 本次补齐 {added} · 仅记录 {records} · 未完成 {failures}");
 
@@ -228,16 +225,26 @@ namespace PBZTrainer.Views
                 }
 
                 bool ok = result.Flag("done");
+                if (_stopRequested && !ok)
+                {
+                    var canceled = await _bridge.CompletionCancelAsync(job);
+                    string state = canceled.Flag("ok") ? "已停止，已完成部分保留" : "取消未获确认：" + (canceled.Str("message") ?? "未收到确认");
+                    it.ProgressText.Text = state;
+                    ShowSummary(it, state);
+                    return;
+                }
                 it.ProgressText.Foreground = Ui.Brush(ok ? "Jade" : "Warn");
                 it.ProgressText.Text = it.ProgressText.Text + (ok ? "　已完成" : "　已结束");
                 Ui.Log(_log, ok ? "全部条目已回读确认，已有物品未重复添加。" : (result.Str("message") ?? "操作结束，请核对游戏中的已完成部分。"));
 
                 // 饰品兜底：计划里的「饰品」只含未拥有项，可能少于饰品总目录；
                 // 这里按物品目录全量核对一遍，把仍缺的补上（含反击护腕 / 神奇刀鞘 / 妙手千钧 / 妙手连环）。
-                if (!_stoppedByUser && string.Equals(it.Kind, "collection", StringComparison.OrdinalIgnoreCase))
+                if (!_stopRequested && string.Equals(it.Kind, "collection", StringComparison.OrdinalIgnoreCase))
                     await BackfillAccessoriesAsync();
 
-                ShowSummary(it, _stoppedByUser ? "已停止（已完成部分保留，可再次执行继续）"
+                it.Stop.IsEnabled = false;
+                if (_stopRequested) it.ProgressText.Text = "已停止，已完成部分保留";
+                ShowSummary(it, _stopRequested ? "已停止（已完成部分保留，可再次执行继续）"
                                                 : (ok ? "已完成" : "已结束（可再次执行继续补齐）"));
             }
             catch (Exception ex)
@@ -245,17 +252,16 @@ namespace PBZTrainer.Views
                 it.ProgressText.Foreground = Ui.Brush("Warn");
                 it.ProgressText.Text = "执行异常：" + ex.Message;
                 Ui.Log(_log, "执行异常：" + ex.Message);
-                if (_started) ShowSummary(it, "异常中止");
+                it.Stop.IsEnabled = false;
+                if (started) ShowSummary(it, "异常中止");
             }
             finally
             {
-                it.Run.IsEnabled = true;
                 it.Stop.IsEnabled = false;
-                _activeJob = null;
-                _activeKind = null;
-                _started = false;
-                _stoppedByUser = false;
-                _ = RefreshPlansAsync();
+                _activeItem = null;
+                _stopRequested = false;
+                foreach (var card in _items) card.Run.IsEnabled = true;
+                if (confirmed) _ = RefreshPlansAsync();
             }
         }
 
@@ -316,6 +322,7 @@ namespace PBZTrainer.Views
                 if (!_bridge.IsConnected) return;
                 Ui.Log(_log, "饰品兜底核对：读取物品目录…");
                 var r = await _bridge.CatalogAsync("items");
+                if (_stopRequested) return;
                 if (r == null || !r.Flag("ok", false))
                 {
                     Ui.Log(_log, "饰品核对跳过：" + (r?.Str("message") ?? "目录不可用"));
@@ -392,8 +399,8 @@ namespace PBZTrainer.Views
                 text.AppendLine($"未完成（{_failedNames.Count}）：");
                 text.Append(ListOf(_failedNames, 10));
             }
-            if (_addedNames.Count == 0 && _failedNames.Count == 0)
-                text.AppendLine("本次没有需要补齐的项目（都已拥有）。");
+            if (_addedNames.Count == 0 && _recordNames.Count == 0 && _failedNames.Count == 0)
+                text.AppendLine("本次暂无补齐明细。");
 
             Ui.Log(_log, "—— 结果 ——");
             foreach (var line in text.ToString().Split('\n'))
@@ -406,16 +413,13 @@ namespace PBZTrainer.Views
             else MessageBox.Show(body, it.Title, MessageBoxButton.OK, MessageBoxImage.Information);
         }
 
-        private async Task StopAsync(string kind)
+        private void RequestStop(string kind)
         {
-            if (_activeJob == null) return;
-            try
-            {
-                _stoppedByUser = true;
-                await _bridge.CompletionCancelAsync(_activeJob);
-                Ui.Log(_log, "已请求停止，已完成部分保留");
-            }
-            catch (Exception ex) { Ui.Log(_log, "停止失败：" + ex.Message); }
+            if (_activeItem?.Kind != kind || !_activeItem.Stop.IsEnabled) return;
+            _stopRequested = true;
+            _activeItem.Stop.IsEnabled = false;
+            _activeItem.ProgressText.Text = "正在停止…";
+            Ui.Log(_log, "已请求停止：" + _activeItem.Title);
         }
     }
 }

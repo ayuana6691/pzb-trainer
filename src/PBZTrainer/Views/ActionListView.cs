@@ -8,6 +8,7 @@ using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
 using System.Windows.Data;
 using System.Windows.Media;
+using PBZTrainer.Models;
 using PBZTrainer.Services;
 
 namespace PBZTrainer.Views
@@ -19,9 +20,9 @@ namespace PBZTrainer.Views
         public string Subtitle;
         public string LoadType;
         public string PrimaryLabel = "执行";
-        public Func<BridgeClient, CatalogRow, string, Task<JsonObject>> Primary;
+        public Func<BridgeClient, CatalogRow, double, Task<JsonObject>> Primary;
         public string SecondaryLabel;
-        public Func<BridgeClient, CatalogRow, string, Task<JsonObject>> Secondary;
+        public Func<BridgeClient, CatalogRow, double, Task<JsonObject>> Secondary;
         public bool SecondaryWithoutSelection;
         public bool ShowValue;
         public string ValueLabel = "数值";
@@ -38,13 +39,14 @@ namespace PBZTrainer.Views
     }
 
     /// <summary>通用动作页：左侧目录列表，右侧详情 + 操作按钮 + 日志。</summary>
-    public sealed class ActionListView : Grid
+    public sealed class ActionListView : Grid, ISearchablePage
     {
         private readonly BridgeClient _bridge;
         private readonly ActionSpec _spec;
         private readonly List<CatalogRow> _all = new();
         private readonly ListView _list = new();
         private readonly TextBox _search = Ui.Input("", 200);
+        TextBox ISearchablePage.SearchBox => _search;
         private readonly TextBlock _count = Ui.Sub("尚未读取目录");
         private readonly TextBlock _detailTitle = Ui.Text("选择左侧条目", 16, "Text", true);
         private readonly TextBlock _detailMeta = Ui.Sub("");
@@ -63,9 +65,10 @@ namespace PBZTrainer.Views
         };
         private readonly TextBox _log = Ui.LogBox(112);
         private readonly TextBox _value;
+        private readonly TextBlock _valueError = Ui.Text(NumericInput.ErrorMessage, 11.5, "ControlFocus");
         private readonly Button _primary;
         private readonly Button _secondary;
-        private CatalogRow _selected;
+        private bool _running;
         private int _retries;
 
         public ActionListView(BridgeClient bridge, ActionSpec spec)
@@ -122,7 +125,7 @@ namespace PBZTrainer.Views
             _list.Resources[typeof(GridViewColumnHeader)] = hs;
 
             _list.ItemContainerStyle = Ui.Style("GridViewRow");
-            _list.SelectionChanged += (_, __) => { if (_list.SelectedItem is CatalogRow r) ShowDetail(r); };
+            _list.SelectionChanged += (_, __) => ShowDetail(_list.SelectedItem as CatalogRow);
             listPanel.Child = _list;
             body.Children.Add(listPanel);
 
@@ -151,6 +154,12 @@ namespace PBZTrainer.Views
                 actions.Children.Add(_secondary);
             }
             stack.Children.Add(actions);
+            if (spec.ShowValue)
+            {
+                stack.Children.Add(_valueError);
+                _value.TextChanged += (_, __) => UpdateActions();
+            }
+            UpdateActions();
             stack.Children.Add(_stateText);
             stack.Children.Add(new Border { Height = 1, Background = Ui.Brush("Divider"), Margin = new Thickness(0, 10, 0, 8) });
             stack.Children.Add(Ui.Sub("操作记录"));
@@ -173,7 +182,7 @@ namespace PBZTrainer.Views
             Loaded += (_, __) => { if (_all.Count == 0) _ = LoadAsync(); };
         }
 
-        private void ApplyFilter()
+        private void ApplyFilter(bool refreshed = false)
         {
             string q = (_search.Text ?? "").Trim();
             var rows = _all.Where(r => q.Length == 0
@@ -181,8 +190,7 @@ namespace PBZTrainer.Views
                 || (r.Id?.Contains(q, StringComparison.OrdinalIgnoreCase) ?? false)
                 || (r.Category?.Contains(q, StringComparison.OrdinalIgnoreCase) ?? false)).ToList();
 
-            _list.ItemsSource = null;
-            _list.ItemsSource = rows;
+            CatalogSelection.BindRows(_list, rows, refreshed);
             _count.Text = $"{rows.Count} / {_all.Count} 项";
             Ui.Log(_log, _all.Count == 0 ? _spec.EmptyHint : $"已读取 {_all.Count} 项");
         }
@@ -197,7 +205,7 @@ namespace PBZTrainer.Views
                 {
                     _all.Clear();
                     _all.AddRange(_spec.LocalRows());
-                    ApplyFilter();
+                    ApplyFilter(refreshed: true);
                     return;
                 }
 
@@ -224,7 +232,7 @@ namespace PBZTrainer.Views
                         _all.Add(row);
                     }
                 }
-                ApplyFilter();
+                ApplyFilter(refreshed: true);
 
                 if (_all.Count == 0 && _spec.RetryWhenEmpty > _retries)
                 {
@@ -267,37 +275,46 @@ namespace PBZTrainer.Views
 
         private void ShowDetail(CatalogRow row)
         {
-            _selected = row;
-            _detailTitle.Text = row.Name;
-            _detailMeta.Text = string.IsNullOrWhiteSpace(row.Category) ? row.Id : $"{row.Category}  ·  {row.Id}";
-            _desc.Text = string.IsNullOrWhiteSpace(row.Desc) ? "（无说明）" : row.Desc;
-            _stateText.Text = row.StateColumn;
-            _primary.IsEnabled = true;
-            if (_secondary != null) _secondary.IsEnabled = true;
+            _detailTitle.Text = row?.Name ?? "选择左侧条目";
+            _detailMeta.Text = string.IsNullOrWhiteSpace(row?.Category) ? row?.Id ?? "" : $"{row.Category}  ·  {row.Id}";
+            _desc.Text = row == null ? "" : string.IsNullOrWhiteSpace(row.Desc) ? "（无说明）" : row.Desc;
+            _stateText.Text = row?.StateColumn ?? "";
+            UpdateActions();
+        }
+
+        private void UpdateActions()
+        {
+            bool invalid = _spec.ShowValue && !NumericInput.TryParse(_value.Text, out _);
+            bool selected = _list.SelectedItem != null;
+            _valueError.Visibility = invalid ? Visibility.Visible : Visibility.Collapsed;
+            _primary.IsEnabled = !_running && selected && !invalid;
+            if (_secondary != null)
+                _secondary.IsEnabled = !_running && (_spec.SecondaryWithoutSelection || selected) && !invalid;
         }
 
         private async Task RunAsync(bool primary)
         {
-            if (!_bridge.IsConnected) { Ui.Log(_log, "请先连接游戏"); return; }
-            if (_selected == null && primary)
+            var row = _list.SelectedItem as CatalogRow;
+            if (_running || (row == null && (primary || !_spec.SecondaryWithoutSelection))) return;
+            double value = 0;
+            if (_spec.ShowValue && !NumericInput.TryParse(_value.Text, out value))
             {
-                Ui.Log(_log, "请先选择左侧条目");
+                UpdateActions();
                 return;
             }
-
+            if (!_bridge.IsConnected) { Ui.Log(_log, "请先连接游戏"); return; }
             var handler = primary ? _spec.Primary : _spec.Secondary;
             if (handler == null) return;
 
-            var btn = primary ? _primary : _secondary;
             string label = primary ? _spec.PrimaryLabel : _spec.SecondaryLabel;
-            string value = _value.Text;
-            string name = _selected?.Name ?? "";
+            string name = row?.Name ?? "";
 
-            btn.IsEnabled = false;
+            _running = true;
+            UpdateActions();
             try
             {
                 Ui.Log(_log, $"{label}：{name}");
-                var r = await handler(_bridge, _selected, value);
+                var r = await handler(_bridge, row, value);
                 if (r == null) { Ui.Log(_log, "未收到结果"); return; }
 
                 string msg = r.Str("message");
@@ -309,17 +326,9 @@ namespace PBZTrainer.Views
             }
             finally
             {
-                btn.IsEnabled = true;
                 await LoadAsync();
-                if (_selected != null)
-                {
-                    var again = _all.FirstOrDefault(x => x.Id == _selected.Id);
-                    if (again != null)
-                    {
-                        _list.SelectedItem = again;
-                        ShowDetail(again);
-                    }
-                }
+                _running = false;
+                UpdateActions();
             }
         }
     }

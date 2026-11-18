@@ -5,6 +5,7 @@ using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Shapes;
+using PBZTrainer.Models;
 using PBZTrainer.Services;
 
 namespace PBZTrainer.Views
@@ -13,6 +14,7 @@ namespace PBZTrainer.Views
     public sealed class HotkeyPickerView : Grid
     {
         private readonly StateStore _state;
+        private readonly IEnumerable<FeatureVm> _features;
         private readonly Action _onChanged;
         private readonly Action<bool> _onCapture;
 
@@ -42,9 +44,11 @@ namespace PBZTrainer.Views
             "Ctrl+F1", "Ctrl+F2", "Ctrl+Shift+F1", "Insert", "Home"
         };
 
-        public HotkeyPickerView(StateStore state, Action onChanged, Action<bool> onCapture)
+        public HotkeyPickerView(StateStore state, Action onChanged, Action<bool> onCapture,
+            IEnumerable<FeatureVm> features = null)
         {
             _state = state;
+            _features = features ?? Array.Empty<FeatureVm>();
             _onChanged = onChanged;
             _onCapture = onCapture;
 
@@ -94,6 +98,7 @@ namespace PBZTrainer.Views
             Panel.SetZIndex(_captureLayer, 99);
             _captureLayer.PreviewKeyDown += OnCaptureKeyDown;
             _captureLayer.MouseLeftButtonDown += (_, __) => EndCapture();
+            Unloaded += (_, __) => EndCapture();
             Children.Add(_captureLayer);
 
             Refresh();
@@ -225,12 +230,11 @@ namespace PBZTrainer.Views
         {
             if (_state == null) { return; }
 
-            // 与「一键生成」热键冲突时提示（否则后者会覆盖前者）
-            if (!string.IsNullOrEmpty(_state.SpawnHotkey) &&
-                HotkeyService.Normalize(_state.SpawnHotkey) == HotkeyService.Normalize(combo))
+            string owner = _state.FindHotkeyOwner(combo, _features, exceptPanel: true);
+            if (owner != null)
             {
                 MessageBox.Show(Window.GetWindow(this),
-                    $"「{combo}」已经被「一键生成怪物」占用，请换一个组合键。",
+                    $"「{combo}」已被「{owner}」占用，请换一个组合键。",
                     "热键冲突", MessageBoxButton.OK, MessageBoxImage.Warning);
                 return;
             }

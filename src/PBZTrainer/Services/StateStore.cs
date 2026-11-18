@@ -109,16 +109,17 @@ namespace PBZTrainer.Services
                             };
                         }
                         RestoreSettings = Bool(root["RestoreSettings"], true);
-                        if (RestoreSettings && root["Features"] is JsonObject feats)
+                        if (root["Features"] is JsonObject feats)
                         {
                             foreach (var kv in feats)
                             {
                                 if (!map.TryGetValue(kv.Key, out var vm)) continue;
                                 if (kv.Value is not JsonObject o) continue;
+                                vm.Hotkey = Str(o["Hotkey"]) ?? "";
+                                if (!RestoreSettings) continue;
                                 vm.IsEnabled = Bool(o["Enabled"], false);
                                 string val = Str(o["Value"]);
                                 if (!string.IsNullOrEmpty(val)) vm.ValueText = val;
-                                vm.Hotkey = Str(o["Hotkey"]) ?? "";
                             }
                         }
                     }
@@ -149,6 +150,25 @@ namespace PBZTrainer.Services
 
             foreach (var f in Favorites)
                 if (map.TryGetValue(f, out var vm)) vm.IsFavorite = true;
+        }
+
+        public string FindHotkeyOwner(string combo, IEnumerable<FeatureVm> features,
+            bool exceptPanel = false, FeatureVm exceptFeature = null, string exceptSpawnId = null)
+        {
+            if (string.IsNullOrWhiteSpace(combo)) return null;
+            string normalized = HotkeyService.Normalize(combo);
+            bool Matches(string key) => !string.IsNullOrWhiteSpace(key) &&
+                string.Equals(HotkeyService.Normalize(key), normalized, StringComparison.OrdinalIgnoreCase);
+
+            if (!exceptPanel && Matches(PanelToggleHotkey)) return "唤出 / 隐藏修改器";
+            foreach (var feature in features)
+                if (feature != exceptFeature && Matches(feature.Hotkey)) return feature.Title;
+            foreach (var (id, binding) in SpawnBindings)
+            {
+                if (string.Equals(id, exceptSpawnId, StringComparison.OrdinalIgnoreCase) || !Matches(binding?.Hotkey)) continue;
+                return "生成怪物 · " + (string.IsNullOrWhiteSpace(binding.Name) ? id : binding.Name);
+            }
+            return null;
         }
 
         public void Save(IEnumerable<FeatureVm> items)

@@ -10,6 +10,7 @@ namespace PBZTrainer.Models
     {
         private bool _isEnabled;
         private string _valueText;
+        private string _valueDraft;
         private string _hotkey = "";
         private bool _isFavorite;
         private bool _isBusy;
@@ -23,7 +24,7 @@ namespace PBZTrainer.Models
         public FeatureVm(FeatureInfo info)
         {
             Info = info;
-            _valueText = info.DefaultValue;
+            _valueDraft = _valueText = info.DefaultValue;
         }
 
         public FeatureInfo Info { get; }
@@ -59,7 +60,7 @@ namespace PBZTrainer.Models
             get => _pendingToggle ?? IsEnabled;
             set
             {
-                if (HasToggle && !IsBusy && value != IsEnabled) ToggleRequested?.Invoke(value);
+                if (HasToggle && CanApply && value != IsEnabled) ToggleRequested?.Invoke(value);
             }
         }
 
@@ -68,17 +69,34 @@ namespace PBZTrainer.Models
         public string ValueText
         {
             get => _valueText;
-            set { if (_valueText != value) { _valueText = value; Raise(); } }
+            set => ValueDraft = value;
         }
 
-        public double NumericValue
+        // 编辑时保留未完成的输入，仅将有效数值交给保存逻辑。
+        public string ValueDraft
         {
-            get
+            get => _valueDraft;
+            set
             {
-                return double.TryParse(_valueText, System.Globalization.NumberStyles.Float,
-                    System.Globalization.CultureInfo.InvariantCulture, out var d) ? d : 1.0;
+                if (_valueDraft == value) return;
+                _valueDraft = value;
+                if (NumericInput.TryParse(value, out _) && _valueText != value)
+                {
+                    _valueText = value;
+                    Raise(nameof(ValueText));
+                }
+                Raise();
+                Raise(nameof(HasValueError));
+                Raise(nameof(CanApply));
+                Raise(nameof(CanUseCardAction));
             }
         }
+
+        public bool HasValueError => HasValue && !NumericInput.TryParse(_valueDraft, out _);
+        public bool CanApply => !IsBusy && !HasValueError;
+        public bool CanUseCardAction => IsAction ? CanApply : CanInteract;
+        public double NumericValue => NumericInput.TryParse(HasValue ? _valueDraft : _valueText, out var value)
+            ? value : throw new FormatException(NumericInput.ErrorMessage);
 
         public string Hotkey
         {
@@ -106,6 +124,8 @@ namespace PBZTrainer.Models
             _pendingToggle = toggleTarget;
             Raise(nameof(IsBusy));
             Raise(nameof(CanInteract));
+            Raise(nameof(CanApply));
+            Raise(nameof(CanUseCardAction));
             Raise(nameof(ToggleChecked));
             Raise(nameof(StateText));
             Raise(nameof(ShowNotApplied));

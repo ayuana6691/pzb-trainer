@@ -105,7 +105,8 @@ namespace PBZTrainer.Views
 
             // 运行模块状态：排查环境问题时最关键的一段（不显示内部文件名）
             Line("=== 运行模块 ===");
-            Line("自带运行模块：" + (Injector.HasEmbeddedBridge ? "是" : "否（当前程序不含，请重新下载）"));
+            bool embedded = Injector.HasEmbeddedBridge;
+            Line("自带运行模块：" + (embedded ? "是" : "否（使用独立运行模块）"));
             string compPath = null;
             try { compPath = Injector.ResolveBridgePath(); } catch (Exception ex) { Line("解析路径异常：" + ex.Message); }
             Line("所在目录：" + (string.IsNullOrEmpty(compPath) ? "（未就绪）" : System.IO.Path.GetDirectoryName(compPath)));
@@ -130,7 +131,10 @@ namespace PBZTrainer.Views
                 catch { }
                 Line("来源：" + src);
             }
-            if (!string.IsNullOrEmpty(Injector.LastExtractError))
+            bool preview = !embedded && string.IsNullOrEmpty(compPath);
+            if (preview)
+                Line("当前可浏览界面，连接游戏需要单独提供运行模块。");
+            else if (string.IsNullOrEmpty(compPath) && !string.IsNullOrEmpty(Injector.LastExtractError))
                 Line("未就绪原因：" + Injector.Sanitize(Injector.LastExtractError));
             Line("");
 
@@ -146,7 +150,7 @@ namespace PBZTrainer.Views
             {
                 Line("当前未连接。状态：" + _bridge.State + " · " + _bridge.LastMessage);
                 if (!string.IsNullOrEmpty(_bridge.FailureHint)) Line("建议：" + _bridge.FailureHint);
-                Line("可尝试：关闭其他修改器窗口 → 以管理员运行 → 完全退出游戏重开。");
+                if (!preview) Line("可尝试：关闭其他修改器窗口 → 以管理员运行 → 完全退出游戏重开。");
                 _output.Text = sb.ToString();
                 _status.Text = "未连接，已生成基础信息";
                 return;

@@ -11,13 +11,14 @@ using PBZTrainer.Services;
 namespace PBZTrainer.Views
 {
     /// <summary>技能连段：从技能目录里挑招式排成一串，按间隔依次释放。</summary>
-    public sealed class SkillChainView : Grid
+    public sealed class SkillChainView : Grid, ISearchablePage
     {
         private readonly BridgeClient _bridge;
         private readonly List<CatalogRow> _all = new();
         private readonly List<CatalogRow> _queue = new();
 
         private readonly TextBox _search = Ui.Input("", 180);
+        TextBox ISearchablePage.SearchBox => _search;
         private readonly ListView _catalog = new();
         private readonly ListView _chain = new();
         private readonly TextBox _gap = Ui.Input("800", 72, 26);

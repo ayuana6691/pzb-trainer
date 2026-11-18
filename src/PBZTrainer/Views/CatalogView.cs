@@ -11,6 +11,7 @@ using System.Windows.Controls.Primitives;
 using System.Windows.Data;
 using System.Windows.Input;
 using System.Windows.Media;
+using PBZTrainer.Models;
 using PBZTrainer.Services;
 
 namespace PBZTrainer.Views
@@ -40,21 +41,43 @@ namespace PBZTrainer.Views
 
     public enum CatalogMode { Grant, Inventory, Spawn, Travel, Revive }
 
+    internal static class CatalogSelection
+    {
+        public static void BindRows(ListView list, List<CatalogRow> rows, bool refreshed)
+        {
+            var previous = list.SelectedItem as CatalogRow;
+            CatalogRow selection = null;
+            if (previous != null && rows.Contains(previous))
+                selection = previous;
+            else if (refreshed && !string.IsNullOrEmpty(previous?.Id) &&
+                     list.Items.OfType<CatalogRow>().Count(row => row.Id == previous.Id) == 1)
+            {
+                var matches = rows.Where(row => row.Id == previous.Id).Take(2).ToArray();
+                if (matches.Length == 1) selection = matches[0];
+            }
+
+            list.ItemsSource = rows;
+            list.SelectedItem = selection;
+        }
+    }
+
     /// <summary>目录类页面：物品 / 背包 / 生成怪物 / 探索地图，共用一套浏览+操作界面。</summary>
-    public sealed class CatalogView : Grid
+    public sealed class CatalogView : Grid, ISearchablePage
     {
         private readonly BridgeClient _bridge;
         private readonly CatalogMode _mode;
         private readonly string _loadType;
 
         private readonly List<CatalogRow> _all = new();
-        private readonly List<CatalogRow> _view = new();
         private readonly ListView _list = new();
         private readonly TextBox _search = Ui.Input("", 200);
+        TextBox ISearchablePage.SearchBox => _search;
         private readonly StackPanel _categoryBar = new() { Orientation = Orientation.Horizontal };
         private readonly TextBlock _spawnHotkeyLabel = Ui.Sub("");
         private readonly WrapPanel _spawnHotkeyPicker = new() { Visibility = Visibility.Collapsed };
+        private readonly WrapPanel _hotkeyButtons = new();
         private StateStore _state;
+        internal IEnumerable<FeatureVm> FeatureBindings { get; set; } = Array.Empty<FeatureVm>();
         /// <summary>由主窗口注入：用于持久化「一键生成」热键。</summary>
         public StateStore State
         {
@@ -119,7 +142,8 @@ namespace PBZTrainer.Views
         private bool _assistOn;
         private readonly Button _restoreAll;
 
-        private CatalogRow _selected;
+        private CatalogRow _selected => _list.SelectedItem as CatalogRow;
+        private bool _running;
         private double[] _savedPosition;
         private string _savedWorld;
 
@@ -208,6 +232,7 @@ namespace PBZTrainer.Views
             body.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(470) });
             body.Children.Add(BuildList());
             var detail = BuildDetail();
+            ShowDetail(null);
             Grid.SetColumn(detail, 1);
             body.Children.Add(detail);
             Grid.SetRow(body, 2);
@@ -223,6 +248,7 @@ namespace PBZTrainer.Views
             Panel.SetZIndex(_captureLayer, 99);
             _captureLayer.PreviewKeyDown += OnCaptureKeyDown;
             _captureLayer.MouseLeftButtonDown += (_, __) => EndCapture();
+            Unloaded += (_, __) => EndCapture();
             Children.Add(_captureLayer);
 
             Loaded += (_, __) => { if (_all.Count == 0) _ = LoadAsync(); };
@@ -279,10 +305,7 @@ namespace PBZTrainer.Views
             _list.Resources[typeof(GridViewColumnHeader)] = hs;
 
             _list.ItemContainerStyle = Ui.Style("GridViewRow");
-            _list.SelectionChanged += (_, __) =>
-            {
-                if (_list.SelectedItem is CatalogRow row) ShowDetail(row);
-            };
+            _list.SelectionChanged += (_, __) => ShowDetail(_selected);
             panel.Child = _list;
             return panel;
         }
@@ -360,12 +383,11 @@ namespace PBZTrainer.Views
                 _spawnHotkeyLabel.ToolTip = "当前怪物绑定的热键（每个怪物各自独立）";
                 stack.Children.Add(_spawnHotkeyLabel);
 
-                var hkButtons = new WrapPanel();
-                hkButtons.Children.Add(Ui.Button("选择热键", ToggleHotkeyPicker, "Ghost", 28, 92, 11.5));
+                _hotkeyButtons.Children.Add(Ui.Button("选择热键", ToggleHotkeyPicker, "Ghost", 28, 92, 11.5));
                 var clearHk = Ui.Button("清除本怪物的热键", ClearSpawnHotkey, "Ghost", 28, 132, 11.5);
                 clearHk.Margin = new Thickness(8, 0, 0, 0);
-                hkButtons.Children.Add(clearHk);
-                stack.Children.Add(hkButtons);
+                _hotkeyButtons.Children.Add(clearHk);
+                stack.Children.Add(_hotkeyButtons);
 
                 _spawnHotkeyPicker.Margin = new Thickness(0, 8, 0, 0);
                 stack.Children.Add(_spawnHotkeyPicker);
@@ -426,6 +448,7 @@ namespace PBZTrainer.Views
                     return;
                 }
                 var items = r["items"] as JsonArray;
+                bool firstLoad = _all.Count == 0;
                 _all.Clear();
                 if (items != null)
                 {
@@ -464,22 +487,9 @@ namespace PBZTrainer.Views
 
                 if (_mode == CatalogMode.Spawn || _mode == CatalogMode.Revive) _ = SyncAssistStateAsync();
                 RebuildCategories();   // 生成/复活页需要「全部 · 普通敌人 · 首领」这类筛选
-                ApplyFilter();
-
-                // 默认选中第一项：省掉「先点一行」这一步，绑定热键/直接生成更顺手
-                if (_selected == null && _view.Count > 0)
-                {
+                ApplyFilter(refreshed: true);
+                if (firstLoad && _list.Items.Count > 0)
                     _list.SelectedIndex = 0;
-                    ShowDetail(_view[0]);
-                }
-
-                // 默认选中第一项：省掉「先点一行」这一步，绑定热键/直接生成更顺手
-                if (_selected == null && _view.Count > 0)
-                {
-                    _list.SelectedIndex = 0;
-                    ShowDetail(_view[0]);
-                }
-                _count.Text = $"{_all.Count} 项";
                 Ui.Log(_log, $"已读取目录：{_all.Count} 项");
             }
             catch (Exception ex)
@@ -569,26 +579,11 @@ namespace PBZTrainer.Views
             if (_state == null) { Ui.Log(_log, "热键不可用：请先连接游戏"); return; }
             if (_selected == null) { Ui.Log(_log, "请先在左侧列表里选中一个怪物，再绑定热键"); return; }
 
-            string norm = HotkeyService.Normalize(combo);
-
-            // 唤出热键冲突
-            if (!string.IsNullOrEmpty(_state.PanelToggleHotkey) &&
-                HotkeyService.Normalize(_state.PanelToggleHotkey) == norm)
+            string owner = _state.FindHotkeyOwner(combo, FeatureBindings, exceptSpawnId: _selected.Id);
+            if (owner != null)
             {
-                Warn($"「{combo}」已经是「唤出修改器」的热键，请换一个。");
-                Ui.Log(_log, $"绑定失败：{combo} 已被唤出热键占用");
-                return;
-            }
-
-            // 其他怪物已占用
-            foreach (var kv in _state.SpawnBindings)
-            {
-                if (kv.Key.Equals(_selected.Id, StringComparison.OrdinalIgnoreCase)) continue;
-                if (string.IsNullOrEmpty(kv.Value.Hotkey)) continue;
-                if (HotkeyService.Normalize(kv.Value.Hotkey) != norm) continue;
-                string who = string.IsNullOrEmpty(kv.Value.Name) ? kv.Key : kv.Value.Name;
-                Warn($"「{combo}」已经绑给「{who}」了。\n\n每个怪物要用不同的组合键；如果要改，先去那个怪物上点「清除」。");
-                Ui.Log(_log, $"绑定失败：{combo} 已被「{who}」占用");
+                Warn($"「{combo}」已被「{owner}」占用，请换一个组合键。");
+                Ui.Log(_log, $"绑定失败：{combo} 已被「{owner}」占用");
                 return;
             }
 
@@ -702,17 +697,17 @@ namespace PBZTrainer.Views
             }
         }
 
-        private void ApplyFilter()
+        private void ApplyFilter(bool refreshed = false)
         {
             string q = (_search.Text ?? "").Trim();
             string cat = _categoryValue ?? "全部";
             var terms = q.Split(new[] { ' ', '\u3000' }, StringSplitOptions.RemoveEmptyEntries);
 
-            _view.Clear();
+            var rows = new List<CatalogRow>();
             if (terms.Length == 0)
             {
                 foreach (var r in _all)
-                    if (cat == "全部" || r.Category == cat) _view.Add(r);
+                    if (cat == "全部" || r.Category == cat) rows.Add(r);
             }
             else
             {
@@ -730,16 +725,11 @@ namespace PBZTrainer.Views
                     }
                     if (ok) scored.Add((r, worst));
                 }
-                foreach (var x in scored.OrderBy(x => x.Score).ThenBy(x => x.Row.Name)) _view.Add(x.Row);
+                foreach (var x in scored.OrderBy(x => x.Score).ThenBy(x => x.Row.Name)) rows.Add(x.Row);
             }
 
-            _list.ItemsSource = null;
-            _list.ItemsSource = _view;
-
-            if (terms.Length > 0)
-                _count.Text = $"{_view.Count} / {_all.Count} 项";
-            else
-                _count.Text = $"{_all.Count} 项";
+            CatalogSelection.BindRows(_list, rows, refreshed);
+            _count.Text = rows.Count == _all.Count ? $"{rows.Count} 项" : $"{rows.Count} / {_all.Count} 项";
         }
 
         /// <summary>匹配打分：0 完全相等、1 前缀、2 名称包含、3 代号包含、4 说明包含、5 松散子序列，-1 不匹配。</summary>
@@ -773,8 +763,17 @@ namespace PBZTrainer.Views
 
         private void ShowDetail(CatalogRow row)
         {
-            _selected = row;
+            UpdateRowActions();
             RefreshHotkeyLabel();
+            if (row == null)
+            {
+                _detailTitle.Text = "选择左侧条目";
+                _detailMeta.Text = _desc.Text = _owned.Text = _warn.Text = "";
+                if (_mode == CatalogMode.Inventory) _countBox.Clear();
+                _spawnHotkeyPicker.Visibility = Visibility.Collapsed;
+                EndCapture();
+                return;
+            }
             _detailTitle.Text = row.Name;
             _detailMeta.Text = $"{row.Category}  ·  {row.Id}";
             _desc.Text = string.IsNullOrWhiteSpace(row.Desc) ? "（无说明）" : row.Desc;
@@ -782,18 +781,14 @@ namespace PBZTrainer.Views
             {
                 _owned.Text = $"当前持有 {row.Owned:0.##}" + (row.MaxValue > 0 ? $" / 上限 {row.MaxValue:0}" : "") + (row.Equipped ? "  · 已装备" : "");
                 _countBox.Text = ((int)row.Owned).ToString();
-                _delete.IsEnabled = row.CanDelete;
-                _primary.IsEnabled = row.Editable;
             }
             else if (_mode == CatalogMode.Travel)
             {
                 _owned.Text = row.Available ? "可前往" : (string.IsNullOrEmpty(row.Reason) ? "暂不可前往" : row.Reason);
-                _primary.IsEnabled = row.Available;
             }
             else
             {
                 _owned.Text = row.Available ? "" : (string.IsNullOrEmpty(row.Reason) ? "暂不可操作" : row.Reason);
-                _primary.IsEnabled = row.Available;
                 if (_mode == CatalogMode.Spawn || _mode == CatalogMode.Revive)
                 {
                     _warn.Text = row.Category == "首领"
@@ -803,14 +798,23 @@ namespace PBZTrainer.Views
             }
         }
 
+        private void UpdateRowActions()
+        {
+            var row = _selected;
+            _primary.IsEnabled = !_running && row != null && (_mode == CatalogMode.Inventory ? row.Editable : row.Available);
+            _delete.IsEnabled = !_running && row?.CanDelete == true;
+            _hotkeyButtons.IsEnabled = row != null;
+        }
+
         // ---------- 操作 ----------
 
         private async Task PrimaryAsync()
         {
-            if (_selected == null) { Ui.Log(_log, "请先选择左侧条目"); return; }
+            if (!_primary.IsEnabled || _selected == null) return;
             if (!_bridge.IsConnected) { Ui.Log(_log, "请先连接游戏"); return; }
             var row = _selected;
-            _primary.IsEnabled = false;
+            _running = true;
+            UpdateRowActions();
             try
             {
                 switch (_mode)
@@ -861,9 +865,10 @@ namespace PBZTrainer.Views
             }
             finally
             {
-                _primary.IsEnabled = true;
                 if (_mode != CatalogMode.Spawn && _mode != CatalogMode.Revive && _mode != CatalogMode.Travel)
-                    _ = LoadAsync();
+                    await LoadAsync();
+                _running = false;
+                UpdateRowActions();
             }
         }
 
@@ -1001,18 +1006,25 @@ namespace PBZTrainer.Views
 
         private async Task DeleteAsync()
         {
-            if (_selected == null) return;
+            if (!_delete.IsEnabled || _selected == null) return;
             var row = _selected;
             var answer = MessageBox.Show($"确认删除「{row.Name}」的整个持有记录？\n该操作不能通过关闭修改器撤销。",
                 "删除物品", MessageBoxButton.OKCancel, MessageBoxImage.Warning);
-            if (answer != MessageBoxResult.OK) { Ui.Log(_log, "已取消删除"); return; }
+            if (answer != MessageBoxResult.OK || _selected != row) { Ui.Log(_log, "已取消删除"); return; }
+            _running = true;
+            UpdateRowActions();
             try
             {
                 var r = await _bridge.InventoryChangeAsync(row.Id, row.Snapshot, true, 0);
                 Ui.Log(_log, r.Flag("ok") ? "已删除" : ("删除失败：" + (r.Str("message") ?? "")));
             }
             catch (Exception ex) { Ui.Log(_log, "删除异常：" + ex.Message); }
-            await LoadAsync();
+            finally
+            {
+                await LoadAsync();
+                _running = false;
+                UpdateRowActions();
+            }
         }
 
         private async Task RecordAsync()

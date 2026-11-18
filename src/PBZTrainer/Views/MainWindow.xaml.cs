@@ -120,34 +120,19 @@ namespace PBZTrainer.Views
         // ---------- 连接 ----------
 
         private bool _runtimePrompted;
+        private bool _runtimeMissing;
 
-        /// <summary>
-        /// 运行模块没就绪时给一次性说明。不再要求用户去找/选任何文件，
-        /// 也完全不提内部文件名——只给可操作的白名单步骤。
-        /// </summary>
         private bool EnsureRuntimeReady()
         {
-            if (Injector.ResolveBridgePath() != null) return true;
-            if (_runtimePrompted) return false;
+            _runtimeMissing = Injector.ResolveBridgePath() == null;
+            if (!_runtimeMissing) return true;
+            if (!Injector.HasEmbeddedBridge || _runtimePrompted) return false;
             _runtimePrompted = true;
 
-            var owner = Window.GetWindow(this);
-            string detail = Injector.Sanitize(Injector.LastExtractError ?? "");
-
-            string body =
-                "程序自带的运行模块没能就绪，暂时连不上游戏。\n\n" +
-                (string.IsNullOrEmpty(detail) ? "" : "系统返回：" + detail + "\n\n") +
-                "通常是杀毒软件把它拦下了。按顺序试：\n" +
-                "1. 把本程序所在的整个文件夹加入杀毒软件白名单\n" +
-                "   （Windows 安全中心 → 病毒和威胁防护 → 管理设置 → 排除项 → 添加文件夹）\n" +
-                "2. 同样把  %LOCALAPPDATA%\\影之刃零修改器  加入排除项\n" +
-                "3. 完全关闭本程序，再重新打开\n\n" +
-                "如果仍然不行：打开「更多 → 连接诊断 → 开始诊断」，把内容发给作者。";
-
-            if (owner != null)
-                MessageBox.Show(owner, body, "运行环境未就绪", MessageBoxButton.OK, MessageBoxImage.Warning);
-            else
-                MessageBox.Show(body, "运行环境未就绪", MessageBoxButton.OK, MessageBoxImage.Warning);
+            string detail = Injector.Sanitize(Injector.LastExtractError);
+            string body = "内置运行模块加载失败。" + (string.IsNullOrWhiteSpace(detail) ? "" : "\n" + detail) +
+                          "\n\n可在「连接诊断」中查看详情。";
+            MessageBox.Show(this, body, "运行环境未就绪", MessageBoxButton.OK, MessageBoxImage.Warning);
             return false;
         }
 
@@ -161,17 +146,14 @@ namespace PBZTrainer.Views
                 ConnectButton.Content = "连接中…";
                 ConnectButton.IsEnabled = false;
 
-                if (!EnsureRuntimeReady())
-                {
-                    SetStatus("运行环境未就绪", "#D9A441", "!");
-                    ConnectButton.Content = "连接游戏";
-                    return;
-                }
+                if (!EnsureRuntimeReady()) return;
 
                 bool ok = await _bridge.ConnectAsync(true, m => Dispatcher.Invoke(() => SetStatus(m, "#8C8390", "◌")));
                 if (ok)
                 {
+                    var runningCompletion = _views.GetValueOrDefault("completion") as CompletionView;
                     _views.Clear();
+                    if (runningCompletion?.IsRunning == true) _views["completion"] = runningCompletion;
                     if (PageHost.Visibility == Visibility.Visible && !IsFeatureTab(_tab))
                         PageHost.Content = GetView(_tab);
                     SyncFeatureStates();
@@ -201,6 +183,15 @@ namespace PBZTrainer.Views
         private void RefreshStatus()
         {
             ConnectButton.Content = _bridge.IsConnected ? "重新连接" : "连接游戏";
+
+            if (_runtimeMissing && !_bridge.IsConnected)
+            {
+                bool preview = !Injector.HasEmbeddedBridge;
+                SetStatus(preview ? "界面预览" : "运行模块未就绪", "#D9A441", "○");
+                SubtitleText.Text = preview ? "可以浏览各页，连接游戏需要单独提供运行模块" : "内置运行模块加载失败，可打开连接诊断查看详情";
+                FooterInfo.Text = "等待运行模块";
+                return;
+            }
 
             switch (_bridge.State)
             {
@@ -370,6 +361,9 @@ namespace PBZTrainer.Views
         // ---------- 交互 ----------
 
         private static bool IsFeatureTab(string tag) => tag != null && tag.StartsWith("cat:");
+
+        private TextBox ActiveSearchBox => SearchHost.Visibility == Visibility.Visible
+            ? SearchBox : (PageHost.Content as ISearchablePage)?.SearchBox;
 
         private static (string Group, (string Tag, string Label, string Hint)[] Items)[] BuildNavModel()
         {
@@ -568,6 +562,7 @@ namespace PBZTrainer.Views
                 if (tag == "hotkeys") _hotkeyView?.Refresh();
                 CountBadge.Text = NavModel.SelectMany(g => g.Items).First(i => i.Tag == tag).Label;
             }
+            FooterShortcutHint.Text = ActiveSearchBox == null ? "拖标题移动窗口" : "Ctrl+F 搜索 · 拖标题移动窗口";
             ScheduleSave();
         }
 
@@ -585,7 +580,7 @@ namespace PBZTrainer.Views
                         SaveState();
                         RebuildHotkeys();
                     },
-                    paused => _hotkeys.Suspended = paused);
+                    paused => _hotkeys.Suspended = paused, _all);
             }
             _hotkeyView.Refresh();
             return _hotkeyView;
@@ -596,6 +591,7 @@ namespace PBZTrainer.Views
             var v = new CatalogView(_bridge, CatalogMode.Spawn, "生成怪物",
                 "按原生流程在角色附近生成；可设数量、距离、阵营，右侧可绑定一键生成热键（游戏内也生效）。", "enemies");
             v.State = _state;
+            v.FeatureBindings = _all;
             v.OnSpawnHotkeyChanged = () =>
             {
                 SaveState();
@@ -697,7 +693,7 @@ namespace PBZTrainer.Views
                     ValueLabel = "数量",
                     ValueDefault = "999",
                     PrimaryLabel = "设置数量",
-                    Primary = (b, r, v) => b.ResourceSetAsync(r.Id, double.TryParse(v, out var d) ? d : 0)
+                    Primary = (b, r, v) => b.ResourceSetAsync(r.Id, v)
                 }),
                 "attribute" => new ActionListView(_bridge, new ActionSpec
                 {
@@ -709,7 +705,7 @@ namespace PBZTrainer.Views
                     ValueLabel = "设为",
                     ValueDefault = "100",
                     PrimaryLabel = "写入数值",
-                    Primary = (b, r, v) => b.AttributeSetAsync(r.Id, double.TryParse(v, out var d) ? d : 0),
+                    Primary = (b, r, v) => b.AttributeSetAsync(r.Id, v),
                     LocalRows = PBZTrainer.Models.AttributeCatalog.Rows,
                     StateReader = n => ""
                 }),
@@ -754,7 +750,7 @@ namespace PBZTrainer.Views
 
         private void Step(object sender, bool up)
         {
-            if (((FrameworkElement)sender).DataContext is not FeatureVm vm || vm.IsBusy) return;
+            if (((FrameworkElement)sender).DataContext is not FeatureVm vm || !vm.CanApply) return;
             double v = vm.NumericValue;
             double step = v < 1 ? 0.1 : v < 10 ? 1 : v < 100 ? 5 : 100;
             v = Math.Max(0, up ? v + step : v - step);
@@ -789,14 +785,14 @@ namespace PBZTrainer.Views
 
         private void CommitValue(TextBox input)
         {
-            if (input.DataContext is not FeatureVm vm || Equals(input.Tag, vm.ValueText)) return;
+            if (input.DataContext is not FeatureVm vm || !vm.CanApply || Equals(input.Tag, vm.ValueText)) return;
             input.Tag = vm.ValueText;
             if (vm.IsEnabled && !vm.IsAction) _ = ApplyAsync(vm);
         }
 
         private async Task ApplyAsync(FeatureVm vm, bool? toggleTarget = null)
         {
-            if (vm.IsBusy) return;
+            if (!vm.CanApply) return;
             vm.SetApplyState(true, toggleTarget);
 
             try
@@ -981,16 +977,26 @@ namespace PBZTrainer.Views
                 return;
             }
 
-            if (e.Key == Key.F && Keyboard.Modifiers == ModifierKeys.Control && SearchHost.Visibility == Visibility.Visible)
+            e.Handled = HandleSearchShortcut(e.Key, Keyboard.Modifiers);
+        }
+
+        private bool HandleSearchShortcut(Key key, ModifierKeys modifiers)
+        {
+            if (_hotkeys.Suspended) return false;
+            var search = ActiveSearchBox;
+            if (search == null) return false;
+            if (key == Key.F && modifiers == ModifierKeys.Control)
             {
-                SearchBox.Focus();
-                SearchBox.SelectAll();
-                e.Handled = true;
+                search.Focus();
+                search.SelectAll();
+                return true;
             }
-            else if (e.Key == Key.Escape)
+            if (key == Key.Escape && modifiers == ModifierKeys.None && search.Text.Length != 0)
             {
-                SearchBox.Clear();
+                search.Clear();
+                return true;
             }
+            return false;
         }
 
         private static string BuildCombo(ModifierKeys mods, Key key)
@@ -1007,6 +1013,14 @@ namespace PBZTrainer.Views
         private void CommitHotkey(string combo)
         {
             string normalized = string.IsNullOrEmpty(combo) ? "" : HotkeyService.Normalize(combo);
+            string owner = _state.FindHotkeyOwner(normalized, _all, exceptPanel: _hotkeyTarget == null,
+                exceptFeature: _hotkeyTarget);
+            if (owner != null)
+            {
+                CloseHotkeyLayer();
+                ShowToast($"「{normalized}」已被「{owner}」占用，请换一个组合键。", 4);
+                return;
+            }
 
             if (_hotkeyTarget == null)
             {
@@ -1016,24 +1030,6 @@ namespace PBZTrainer.Views
                 RebuildHotkeys();
                 ScheduleSave();
                 ShowToast(string.IsNullOrEmpty(normalized) ? "显隐热键已清除" : "显隐热键已保存：" + normalized);
-                return;
-            }
-
-            var duplicate = _all.FirstOrDefault(f => f != _hotkeyTarget && !string.IsNullOrEmpty(f.Hotkey)
-                                && HotkeyService.Normalize(f.Hotkey) == normalized);
-            if (duplicate != null && !string.IsNullOrEmpty(normalized))
-            {
-                ShowToast($"此快捷键已被「{duplicate.Title}」占用，是否覆盖？（已覆盖）");
-                duplicate.Hotkey = "";
-            }
-
-            if (!string.IsNullOrEmpty(normalized) && HotkeyService.Normalize(_state.PanelToggleHotkey) == normalized)
-            {
-                ShowToast("该按键已用于面板显隐，请换一个");
-                _hotkeyTarget.Hotkey = "";
-                CloseHotkeyLayer();
-                RebuildHotkeys();
-                ScheduleSave();
                 return;
             }
 
