@@ -2,7 +2,7 @@
 
 《影之刃零 / Phantom Blade Zero》单人模式的外部修改器，C# / WPF 实现，水墨暗色 + 朱砂红界面。
 
-作者：B站账号 **KuugaOOO**。其余账号发布的同名修改器均为盗版。
+原作者：[Kuuga-913](https://github.com/Kuuga-913)（B 站账号 **KuugaOOO**）。本仓库是 [Kuuga-913/pzb-trainer](https://github.com/Kuuga-913/pzb-trainer) 的 fork，在其基础上做二次开发，具体改动与致谢见下方「[来源与致谢](#来源与致谢)」。上游作者的提示：其余账号发布的同名修改器均为盗版。
 
 **76 项功能开关 + 3000 余条可操作条目**：10 个功能分类、14 个工具页、2 个游戏内悬浮层。
 **默认以管理员权限启动**，游戏无论用普通权限还是管理员权限打开都能连上；启动时系统会弹一次 UAC，点「是」即可。
@@ -191,6 +191,21 @@ src/PBZTrainer/
 - 卡片开关用 `IsChecked` 双向绑定 + `PropertyChanged`，而不是 `Click`（`Click` 不会被键盘 / UIA 触发）。
 - 悬浮层是 `Topmost` + `WS_EX_TRANSPARENT` 的透明窗，按游戏客户区物理像素定位、内容做 `1/dpi` 缩放，使 1 个布局单位等于 1 物理像素；修改器窗口在前台时自动隐藏。
 - 透视用「150ms 拉帧 + 每帧向目标位置插值 + 元素按 id 复用」，避免位置跳变。
+
+## 来源与致谢
+
+本仓库 fork 自 **[Kuuga-913/pzb-trainer](https://github.com/Kuuga-913/pzb-trainer)**（作者 [Kuuga-913](https://github.com/Kuuga-913)，B 站账号 **KuugaOOO**），MIT 协议。
+
+上游提供了这个修改器的全部基础：WPF 界面与交互框架、命名管道协议与指令集、进程交互与注入、76 项功能开关与 14 个目录工具页、游戏内小地图与透视、使用说明与首次使用文档，以及针对游戏各版本的持续适配。**没有这些工作，本仓库无从谈起，感谢原作者的开源。**
+
+本仓库在上游基础上的二次开发：
+
+- **打包流程**：新增 [pack.ps1](pack.ps1)，把「自带 .NET 运行时 + 内嵌运行模块」固化成默认，并加六步产物自检（单文件 bundle、运行时与 WPF 原生库、内嵌模块 SHA-256），修掉点击 exe 提示缺少运行依赖的问题；
+- **发布流程**：改为推 `v*` tag 触发 Actions、产物直接上传 Release，不再保留 workflow artifact，只保留最新 3 个版本；
+- **版本管理**：版本号唯一来源改为 git tag，去掉写死的 `AssemblyVersion` / `FileVersion`；
+- **交互修复**：设置恢复、连段取消、快捷键误触、开关加载反馈、窄窗列表与跨分类搜索。
+
+上游的 MIT 授权与版权声明原样保留：[LICENSE](LICENSE) 里的 `Copyright (c) 2026 Kuuga-913`、[NOTICE.md](NOTICE.md) 里的第三方内容说明。本仓库的改动同样以 MIT 协议发布。
 
 ## 免责声明
 
