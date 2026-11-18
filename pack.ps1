@@ -371,11 +371,9 @@ function Invoke-Pack {
     Copy-Item -LiteralPath $exePath -Destination (Join-Path $script:OutRootAbs 'PBZTrainer.exe') -Force
 
     Step '6/6 打 zip'
-    # 内嵌模块 -> PBZTrainer-v<版本>-win-x64.zip；预览包 -> 保留 UI-preview 后缀以示区别
-    $suffix = if ($embedBridge) { "v$effectiveVersion" }
-              elseif ($versionFromArg) { "v$effectiveVersion-UI-preview" }
-              else { 'UI-preview' }
-    $zipName = "PBZTrainer-$suffix-win-x64.zip"
+    # 文件名不带版本号：README 用 /releases/latest/download/ 指向它，发版不用改文档。
+    # 版本号在 tag、Release 标题和正文里；exe 里的 FileVersion 也带着。
+    $zipName = if ($embedBridge) { 'PBZTrainer-win-x64.zip' } else { 'PBZTrainer-UI-preview-win-x64.zip' }
     $zipPath = Join-Path $script:OutRootAbs $zipName
     if ($NoZip) {
         Warn '-NoZip：跳过压缩'
@@ -387,21 +385,10 @@ function Invoke-Pack {
 
         $zipSha = Get-Sha256Hex $zipPath
         $zipLen = (Get-Item -LiteralPath $zipPath).Length
+        [IO.File]::WriteAllText((Join-Path $script:OutRootAbs 'SHA256SUMS.txt'), (('{0}  {1}' -f $zipSha, $zipName) + "`n"),
+            (New-Object Text.UTF8Encoding($false)))
         Ok "$zipName  $(Format-Size $zipLen)"
         Info "SHA-256 $zipSha"
-        $zipSums = @('{0}  {1}' -f $zipSha, $zipName)
-
-        # 固定文件名的别名：README 用 /releases/latest/download/PBZTrainer-win-x64.zip 指向它，
-        # 以后每发一版都不用再改文档里的版本号和链接。
-        if ($embedBridge) {
-            $aliasName = 'PBZTrainer-win-x64.zip'
-            Copy-Item -LiteralPath $zipPath -Destination (Join-Path $script:OutRootAbs $aliasName) -Force
-            Ok "$aliasName  （固定名，同一份内容）"
-            $zipSums += ('{0}  {1}' -f $zipSha, $aliasName)
-        }
-
-        [IO.File]::WriteAllText((Join-Path $script:OutRootAbs 'SHA256SUMS.txt'), (($zipSums -join "`n") + "`n"),
-            (New-Object Text.UTF8Encoding($false)))
     }
 
     Say ''
