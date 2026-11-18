@@ -34,6 +34,9 @@
                         <TextBlock Text="{Binding Description}" TextWrapping="Wrap"
                                    Foreground="#B9AEBB" FontSize="11.5"/>
                         <!-- 桥接限制 / 未生效原因 -->
+                        <TextBlock Text="{Binding RestoreFailure}" TextWrapping="Wrap"
+                                   Visibility="{Binding RestoreFailure, Converter={StaticResource TextVis}}"
+                                   Foreground="{DynamicResource Warn}" FontSize="11.5" Margin="0,5,0,0"/>
                         <TextBlock Text="{Binding ExtraNote}" TextWrapping="Wrap"
                                    Foreground="#D9A441" FontSize="11.5" Margin="0,5,0,0">
                             <TextBlock.Style>
@@ -261,7 +264,6 @@
                 <Grid Grid.Column="1">
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto"/>
-                        <RowDefinition Height="Auto"/>
                         <RowDefinition Height="*"/>
                     </Grid.RowDefinitions>
 
@@ -275,26 +277,43 @@
                             <TextBlock x:Name="PageSubtitle" Text="常用能力与资源控制" Style="{StaticResource Sub}"
                                        Margin="0,2,0,0"/>
                         </StackPanel>
-                        <Grid x:Name="SearchHost" Grid.Column="1" Width="240" VerticalAlignment="Center">
-                            <TextBox x:Name="SearchBox" Style="{StaticResource ValueBox}" Height="28"
-                                     TextChanged="Search_TextChanged" Padding="26,3,8,3"/>
-                            <TextBlock Text="🔍" FontSize="11" Foreground="#6E6673" Margin="9,0,0,0"
-                                       VerticalAlignment="Center" IsHitTestVisible="False"/>
-                            <TextBlock x:Name="SearchHint" Text="搜索功能（Ctrl + F）" Style="{StaticResource Sub}"
-                                       Margin="26,0,0,0" VerticalAlignment="Center" IsHitTestVisible="False"/>
-                        </Grid>
+                        <StackPanel x:Name="SearchHost" Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                            <ToggleButton x:Name="OnlyEnabledFilter" Content="只看已开启" Style="{StaticResource ChipStyle}"
+                                          Height="28" Padding="9,0" ToolTip="查看所有分类中已开启的功能"
+                                          Click="OnlyEnabledFilter_Click"/>
+                            <Grid Width="220">
+                                <TextBox x:Name="SearchBox" Style="{StaticResource ValueBox}" Height="28"
+                                         TextChanged="Search_TextChanged" Padding="26,3,8,3"
+                                         AutomationProperties.Name="搜索所有功能"/>
+                                <TextBlock Text="🔍" FontSize="11" Foreground="#6E6673" Margin="9,0,0,0"
+                                           VerticalAlignment="Center" IsHitTestVisible="False"/>
+                                <TextBlock x:Name="SearchHint" Text="搜索所有功能（Ctrl+F）" Style="{StaticResource Sub}"
+                                           Margin="26,0,0,0" VerticalAlignment="Center" IsHitTestVisible="False"/>
+                            </Grid>
+                        </StackPanel>
                     </Grid>
 
-                    <ScrollViewer x:Name="ChipHost" Grid.Row="1" HorizontalScrollBarVisibility="Hidden"
-                                  VerticalScrollBarVisibility="Disabled" Margin="6,0,6,2">
-                        <StackPanel x:Name="ChipPanel" Orientation="Horizontal"/>
-                    </ScrollViewer>
-
-                    <Grid Grid.Row="2">
+                    <Grid Grid.Row="1">
                         <Grid x:Name="FeatureHost">
                             <ScrollViewer x:Name="CardScroll" VerticalScrollBarVisibility="Auto"
                                           HorizontalScrollBarVisibility="Disabled" Padding="0,0,6,0">
-                                <StackPanel x:Name="FeatureSections"/>
+                                <ItemsControl x:Name="FeatureCards" ItemTemplate="{StaticResource CardTemplate}">
+                                    <ItemsControl.ItemsPanel>
+                                        <ItemsPanelTemplate><UniformGrid Columns="2"/></ItemsPanelTemplate>
+                                    </ItemsControl.ItemsPanel>
+                                    <ItemsControl.GroupStyle>
+                                        <GroupStyle>
+                                            <GroupStyle.Panel>
+                                                <ItemsPanelTemplate><StackPanel/></ItemsPanelTemplate>
+                                            </GroupStyle.Panel>
+                                            <GroupStyle.HeaderTemplate>
+                                                <DataTemplate>
+                                                    <TextBlock Text="{Binding Name}" FontWeight="SemiBold" Margin="6,8,6,0"/>
+                                                </DataTemplate>
+                                            </GroupStyle.HeaderTemplate>
+                                        </GroupStyle>
+                                    </ItemsControl.GroupStyle>
+                                </ItemsControl>
                             </ScrollViewer>
 
                             <TextBlock x:Name="EmptyHint" Text="没有匹配的功能，试试其他关键词"

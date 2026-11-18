@@ -160,7 +160,6 @@ namespace PBZTrainer.Views
 
             // 标题行
             var header = new Grid { Margin = new Thickness(0, 0, 0, 10) };
-            header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
             header.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
             header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
             var titleStack = Ui.Col(2, Ui.Text(title, 17, "Text", true), Ui.Sub(subtitle));
@@ -176,7 +175,7 @@ namespace PBZTrainer.Views
             var refresh = Ui.Button("刷新目录", () => _ = LoadAsync(), "AccentBtn", 28, 86, 11.5);
             refresh.Margin = new Thickness(8, 0, 0, 0);
             right.Children.Add(refresh);
-            Grid.SetColumn(right, 2);
+            Grid.SetColumn(right, 1);
             header.Children.Add(right);
             Children.Add(header);
 
@@ -227,14 +226,8 @@ namespace PBZTrainer.Views
             Children.Add(catRow);
 
             // 主体
-            var body = new Grid();
-            body.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1.35, GridUnitType.Star) });
-            body.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(470) });
-            body.Children.Add(BuildList());
-            var detail = BuildDetail();
+            var body = new ListDetailGrid(BuildList(), BuildDetail(), preferredDetailWidth: 470);
             ShowDetail(null);
-            Grid.SetColumn(detail, 1);
-            body.Children.Add(detail);
             Grid.SetRow(body, 2);
             Children.Add(body);
 
@@ -264,7 +257,7 @@ namespace PBZTrainer.Views
             _ => "执行"
         };
 
-        private UIElement BuildList()
+        private Border BuildList()
         {
             var panel = Ui.Panel(null, new Thickness(0));
             var gv = new GridView();
@@ -310,7 +303,7 @@ namespace PBZTrainer.Views
             return panel;
         }
 
-        private UIElement BuildDetail()
+        private Border BuildDetail()
         {
             var stack = new StackPanel();
             stack.Children.Add(Ui.Row(8, _detailTitle));
@@ -415,7 +408,6 @@ namespace PBZTrainer.Views
                 VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
                 HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled
             });
-            panel.Margin = new Thickness(10, 0, 0, 0);
             return panel;
         }
 

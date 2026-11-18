@@ -9,6 +9,8 @@ namespace PBZTrainer.Models
     public sealed class FeatureVm : INotifyPropertyChanged
     {
         private bool _isEnabled;
+        private bool? _desiredEnabled;
+        private string _restoreFailure = "";
         private string _valueText;
         private string _valueDraft;
         private string _hotkey = "";
@@ -54,7 +56,26 @@ namespace PBZTrainer.Models
             }
         }
 
-        /// <summary>开关显示请求目标，IsEnabled 保留已确认状态供同步与保存使用。</summary>
+        // null 表示这个功能没有待恢复的用户偏好。轮询只更新 IsEnabled。
+        public bool? DesiredEnabled
+        {
+            get => _desiredEnabled;
+            set { if (_desiredEnabled != value) { _desiredEnabled = value; Raise(); } }
+        }
+
+        public string RestoreFailure
+        {
+            get => _restoreFailure;
+            set
+            {
+                if (_restoreFailure == value) return;
+                _restoreFailure = value;
+                Raise();
+                Raise(nameof(StateText));
+            }
+        }
+
+        /// <summary>等待期间显示请求目标，IsEnabled 保留已确认状态。</summary>
         public bool ToggleChecked
         {
             get => _pendingToggle ?? IsEnabled;
@@ -212,6 +233,7 @@ namespace PBZTrainer.Models
                     false => "正在关闭…",
                     null => "正在应用…"
                 };
+                if (!string.IsNullOrEmpty(RestoreFailure)) return "恢复未完成";
                 if (!_isSupported) return string.IsNullOrEmpty(_reason) ? "不支持" : _reason;
                 if (IsAction) return _isEnabled ? "已执行" : "";
                 if (!_isEnabled) return "已关闭";

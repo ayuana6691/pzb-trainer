@@ -11,7 +11,9 @@ namespace PBZTrainer.Services
     {
         private const int WH_KEYBOARD_LL = 13;
         private const int WM_KEYDOWN = 0x0100;
+        private const int WM_KEYUP = 0x0101;
         private const int WM_SYSKEYDOWN = 0x0104;
+        private const int WM_SYSKEYUP = 0x0105;
 
         private delegate IntPtr HookProc(int nCode, IntPtr wParam, IntPtr lParam);
 
@@ -42,6 +44,7 @@ namespace PBZTrainer.Services
 
         private readonly HookProc _proc;
         private IntPtr _hook = IntPtr.Zero;
+        private readonly HashSet<int> _pressed = new();
         private readonly Dictionary<string, (Action Action, bool Always)> _map = new(StringComparer.OrdinalIgnoreCase);
 
         /// <summary>触发前置判断（例如仅当前台是游戏或本窗口时才响应）。</summary>
@@ -79,20 +82,29 @@ namespace PBZTrainer.Services
 
         private IntPtr Hook(int nCode, IntPtr wParam, IntPtr lParam)
         {
-            if (nCode >= 0 && !Suspended && (wParam == (IntPtr)WM_KEYDOWN || wParam == (IntPtr)WM_SYSKEYDOWN))
+            if (nCode >= 0)
             {
                 var info = Marshal.PtrToStructure<KBDLLHOOKSTRUCT>(lParam);
-                string combo = CurrentCombo((int)info.vkCode);
-                if (combo != null && _map.TryGetValue(combo, out var entry))
-                {
-                    try
-                    {
-                        if (entry.Always || Filter == null || Filter(combo)) entry.Action();
-                    }
-                    catch { }
-                }
+                HandleKeyMessage((int)wParam, (int)info.vkCode);
             }
             return CallNextHookEx(_hook, nCode, wParam, lParam);
+        }
+
+        private void HandleKeyMessage(int message, int vk)
+        {
+            if (message is WM_KEYUP or WM_SYSKEYUP)
+            {
+                _pressed.Remove(vk);
+                return;
+            }
+            if (message is not (WM_KEYDOWN or WM_SYSKEYDOWN) || !_pressed.Add(vk) || Suspended) return;
+            string combo = CurrentCombo(vk);
+            if (combo == null || !_map.TryGetValue(combo, out var entry)) return;
+            try
+            {
+                if (entry.Always || Filter == null || Filter(combo)) entry.Action();
+            }
+            catch { }
         }
 
         private static bool Down(int vk) => (GetAsyncKeyState(vk) & 0x8000) != 0;
@@ -161,6 +173,7 @@ namespace PBZTrainer.Services
 
         public void Dispose()
         {
+            _pressed.Clear();
             if (_hook != IntPtr.Zero)
             {
                 UnhookWindowsHookEx(_hook);

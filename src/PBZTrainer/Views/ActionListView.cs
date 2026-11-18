@@ -96,15 +96,11 @@ namespace PBZTrainer.Views
             var refresh = Ui.Button("刷新", () => _ = LoadAsync(), "AccentBtn", 28, 70, 11.5);
             refresh.Margin = new Thickness(8, 0, 0, 0);
             right.Children.Add(refresh);
-            Grid.SetColumn(right, 2);
+            Grid.SetColumn(right, 1);
             header.Children.Add(right);
             Children.Add(header);
 
             // 主体
-            var body = new Grid();
-            body.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1.35, GridUnitType.Star) });
-            body.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(430) });
-
             var listPanel = Ui.Panel(null, new Thickness(0));
             var gv = new GridView();
             gv.Columns.Add(new GridViewColumn { Header = "名称", DisplayMemberBinding = new Binding("Name"), Width = 220 });
@@ -127,7 +123,6 @@ namespace PBZTrainer.Views
             _list.ItemContainerStyle = Ui.Style("GridViewRow");
             _list.SelectionChanged += (_, __) => ShowDetail(_list.SelectedItem as CatalogRow);
             listPanel.Child = _list;
-            body.Children.Add(listPanel);
 
             // 详情
             var stack = new StackPanel();
@@ -171,10 +166,7 @@ namespace PBZTrainer.Views
                 VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
                 HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled
             });
-            detail.Margin = new Thickness(10, 0, 0, 0);
-            Grid.SetColumn(detail, 1);
-            body.Children.Add(detail);
-
+            var body = new ListDetailGrid(listPanel, detail, preferredDetailWidth: 430);
             Grid.SetRow(body, 1);
             Children.Add(body);
 

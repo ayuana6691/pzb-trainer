@@ -269,7 +269,7 @@ namespace PBZTrainer.Services
             }
         }
 
-        public async Task<JsonObject> ApplyFeatureAsync(FeatureVm vm, bool enabled, CancellationToken ct = default)
+        public Task<JsonObject> ApplyFeatureAsync(FeatureVm vm, bool enabled, CancellationToken ct = default, bool restoring = false)
         {
             var req = new JsonObject
             {
@@ -278,7 +278,8 @@ namespace PBZTrainer.Services
                 ["enabled"] = enabled,
                 ["value"] = vm.NumericValue
             };
-            return await RequestAsync(req, ct);
+            // 自动恢复只提交一次，直接把拒绝结果呈现给用户。
+            return restoring ? RequestOnceAsync(req, ct) : RequestAsync(req, ct);
         }
 
         /// <summary>收集类功能：不断投递 collection_step 直到 pending 为 false。</summary>

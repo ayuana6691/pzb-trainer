@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json.Nodes;
+using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
@@ -26,8 +27,11 @@ namespace PBZTrainer.Views
         private readonly TextBlock _count = Ui.Sub("尚未读取技能目录");
         private readonly Button _run;
         private readonly Button _stop;
-        private string _chainId;
-        private bool _running;
+        private CancellationTokenSource _runCancellation;
+        private int _connectionVersion;
+        private int _loadVersion;
+        private bool _catalogLoaded;
+        private readonly HashSet<string> _availableIds = new(StringComparer.Ordinal);
 
         public SkillChainView(BridgeClient bridge)
         {
@@ -79,7 +83,8 @@ namespace PBZTrainer.Views
             _chain.Height = 300;
             var gv2 = new GridView();
             gv2.Columns.Add(new GridViewColumn { Header = "#", DisplayMemberBinding = new System.Windows.Data.Binding("Index"), Width = 36 });
-            gv2.Columns.Add(new GridViewColumn { Header = "技能", DisplayMemberBinding = new System.Windows.Data.Binding("Name"), Width = 240 });
+            gv2.Columns.Add(new GridViewColumn { Header = "技能", DisplayMemberBinding = new System.Windows.Data.Binding("Name"), Width = 185 });
+            gv2.Columns.Add(new GridViewColumn { Header = "状态", DisplayMemberBinding = new System.Windows.Data.Binding("Status"), Width = 66 });
             _chain.View = gv2;
             side.Children.Add(_chain);
 
@@ -102,9 +107,10 @@ namespace PBZTrainer.Views
             runRow.Children.Add(_gap);
             runRow.Children.Add(Ui.Sub("毫秒"));
             _run = Ui.Button("执行连段", () => _ = RunAsync(), "AccentBtn", 30, 96, 12);
+            _run.IsEnabled = false;
             _run.Margin = new Thickness(12, 0, 0, 0);
             runRow.Children.Add(_run);
-            _stop = Ui.Button("停止", () => _ = StopAsync(), "Ghost", 30, 66, 12);
+            _stop = Ui.Button("停止", RequestStop, "Ghost", 30, 66, 12);
             _stop.Margin = new Thickness(8, 0, 0, 0);
             _stop.IsEnabled = false;
             runRow.Children.Add(_stop);
@@ -152,35 +158,60 @@ namespace PBZTrainer.Views
         {
             public int Index { get; set; }
             public string Name { get; set; }
-            public CatalogRow Row { get; set; }
+            public string Status { get; set; }
+        }
+
+        internal void ResetConnection()
+        {
+            _connectionVersion++;
+            _loadVersion++;
+            if (_runCancellation != null)
+            {
+                RequestStop();
+                Ui.Log(_log, "连接已切换，本轮连段已中止。");
+            }
+            _catalogLoaded = false;
+            _all.Clear();
+            _availableIds.Clear();
+            ApplyFilter();
+            RefreshChain();
+            _count.Text = "等待读取技能目录";
         }
 
         public async Task LoadAsync()
         {
+            int version = ++_loadVersion;
             if (!_bridge.IsConnected) { _count.Text = "请先连接游戏"; return; }
             _count.Text = "正在读取技能目录…";
             try
             {
                 var r = await _bridge.CatalogAsync("player_skills");
+                if (version != _loadVersion) return;
                 if (!r.Flag("ok")) { _count.Text = r.Str("message") ?? "目录读取失败"; return; }
                 _all.Clear();
+                _availableIds.Clear();
                 if (r["items"] is JsonArray items)
                 {
                     foreach (var node in items.OfType<JsonObject>())
                     {
-                        _all.Add(new CatalogRow
+                        var row = new CatalogRow
                         {
                             Id = node.Str("id") ?? "",
                             Name = node.Str("name") ?? "",
                             Category = node.Str("category") ?? "",
                             Desc = node.Str("description") ?? "",
+                            Available = node.Flag("available", true),
                             Raw = node
-                        });
+                        };
+                        _all.Add(row);
+                        if (row.Available && !string.IsNullOrEmpty(row.Id)) _availableIds.Add(row.Id);
                     }
                 }
+                _catalogLoaded = true;
                 ApplyFilter();
+                RefreshChain();
             }
-            catch (Exception ex) { _count.Text = "读取失败：" + ex.Message; }
+            catch (Exception ex) { if (version == _loadVersion) _count.Text = "读取失败：" + ex.Message; }
         }
 
         private void ApplyFilter()
@@ -220,67 +251,93 @@ namespace PBZTrainer.Views
 
         private void RefreshChain()
         {
-            _chain.ItemsSource = null;
-            _chain.ItemsSource = _queue.Select((r, i) => new ChainStep { Index = i + 1, Name = r.Name, Row = r }).ToList();
+            _chain.ItemsSource = _queue.Select((r, i) => new ChainStep
+            {
+                Index = i + 1,
+                Name = r.Name,
+                Status = !_catalogLoaded ? "待核对" : _availableIds.Contains(r.Id) ? "" : "不可用"
+            }).ToList();
+            _run.IsEnabled = CanRun;
         }
+
+        private bool CanRun => _runCancellation == null && _catalogLoaded &&
+            _queue.Count > 0 && _queue.All(step => _availableIds.Contains(step.Id));
 
         private async Task RunAsync()
         {
             if (!_bridge.IsConnected) { Ui.Log(_log, "请先连接游戏"); return; }
-            if (_queue.Count == 0) { Ui.Log(_log, "队列是空的"); return; }
-            if (_running) return;
+            if (!CanRun) return;
 
             int gap = int.TryParse(_gap.Text, out var g) ? Math.Max(120, Math.Min(5000, g)) : 800;
-            _running = true;
+            var steps = _queue.ToArray();
+            int connection = _connectionVersion;
+            using var stop = new CancellationTokenSource();
+            _runCancellation = stop;
             _run.IsEnabled = false;
             _stop.IsEnabled = true;
+            string chainId = null;
             try
             {
                 var begin = await _bridge.SkillGroupBeginAsync();
+                if (connection != _connectionVersion) return;
                 if (begin == null || !begin.Flag("ok"))
                 {
                     Ui.Log(_log, "无法开始：" + (begin?.Str("message") ?? ""));
                     return;
                 }
-                _chainId = begin.Str("chainId") ?? "";
-                Ui.Log(_log, $"开始连段（{_queue.Count} 步，间隔 {gap}ms）");
+                chainId = begin.Str("chainId") ?? "";
+                Ui.Log(_log, $"开始连段（{steps.Length} 步，间隔 {gap}ms）");
 
-                for (int i = 0; i < _queue.Count; i++)
+                for (int i = 0; i < steps.Length; i++)
                 {
-                    var step = _queue[i];
+                    stop.Token.ThrowIfCancellationRequested();
+                    var step = steps[i];
                     var r = await _bridge.SkillGroupCastAsync(step.Id);
+                    stop.Token.ThrowIfCancellationRequested();
                     bool ok = r != null && r.Flag("ok");
-                    Ui.Log(_log, $"{i + 1}/{_queue.Count} {(ok ? "✔" : "✘")} {step.Name}" +
+                    Ui.Log(_log, $"{i + 1}/{steps.Length} {(ok ? "✔" : "✘")} {step.Name}" +
                                   (ok ? "" : "　" + (r?.Str("message") ?? "")));
                     if (!ok) break;
-                    await Task.Delay(gap);
+                    if (i + 1 < steps.Length) await Task.Delay(gap, stop.Token);
                 }
 
+                _stop.IsEnabled = false;
                 var end = await _bridge.SkillGroupEndAsync();
-                Ui.Log(_log, "连段结束：" + (end?.Str("message") ?? "已提交"));
+                if (connection == _connectionVersion)
+                    Ui.Log(_log, "连段结束：" + (end?.Str("message") ?? "已提交"));
+            }
+            catch (OperationCanceledException) when (stop.IsCancellationRequested)
+            {
+                // 当前步骤的回执已收齐，再结束本轮；切换连接后不向新会话发送旧任务的停止请求。
             }
             catch (Exception ex)
             {
-                Ui.Log(_log, "执行异常：" + ex.Message);
+                if (connection == _connectionVersion) Ui.Log(_log, "执行异常：" + ex.Message);
             }
             finally
             {
-                _running = false;
-                _run.IsEnabled = true;
+                if (stop.IsCancellationRequested && chainId != null && connection == _connectionVersion && _bridge.IsConnected)
+                {
+                    try
+                    {
+                        var reply = await _bridge.SkillGroupStopAsync(chainId);
+                        if (connection == _connectionVersion)
+                            Ui.Log(_log, reply.Flag("ok") ? "连段已停止" : "本地已停止，远端未确认：" + (reply.Str("message") ?? "无回执"));
+                    }
+                    catch (Exception ex) { if (connection == _connectionVersion) Ui.Log(_log, "停止未获确认：" + ex.Message); }
+                }
+                _runCancellation = null;
                 _stop.IsEnabled = false;
-                _chainId = null;
+                _run.IsEnabled = CanRun;
             }
         }
 
-        private async Task StopAsync()
+        private void RequestStop()
         {
-            if (!_running) return;
-            try
-            {
-                var r = await _bridge.SkillGroupStopAsync(_chainId ?? "");
-                Ui.Log(_log, "已请求停止：" + (r?.Str("message") ?? ""));
-            }
-            catch (Exception ex) { Ui.Log(_log, "停止失败：" + ex.Message); }
+            if (_runCancellation == null || _runCancellation.IsCancellationRequested) return;
+            _stop.IsEnabled = false;
+            _runCancellation.Cancel();
+            Ui.Log(_log, "已停止派发后续步骤");
         }
     }
 }

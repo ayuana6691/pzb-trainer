@@ -48,6 +48,9 @@ namespace PBZTrainer.Services
         public string Theme { get; set; } = "雾紫晴岚";
         public List<string> Favorites { get; } = new();
         public bool WriteFailed { get; private set; }
+        private readonly List<string> _recoveryNotes = new();
+        private readonly HashSet<string> _unreadable = new(StringComparer.OrdinalIgnoreCase);
+        public string RecoveryMessage => string.Join("\n", _recoveryNotes);
 
         public StateStore(string dir)
         {
@@ -60,92 +63,74 @@ namespace PBZTrainer.Services
             var map = new Dictionary<string, FeatureVm>(StringComparer.OrdinalIgnoreCase);
             foreach (var it in items) map[it.Id] = it;
 
-            if (File.Exists(StatePath))
+            if (ReadWithBackup(StatePath) is JsonObject root)
             {
-                try
+                SelectedPage = Str(root["SelectedPage"]) ?? SelectedPage;
+                AutoSave = Bool(root["AutoSave"], AutoSave);
+                OnlyWhenTargetOrPanelForeground = Bool(root["OnlyWhenTargetOrPanelForeground"], OnlyWhenTargetOrPanelForeground);
+                PanelToggleHotkey = Str(root["PanelToggleHotkey"]) ?? PanelToggleHotkey;
+                SpawnHotkey = Str(root["SpawnHotkey"]) ?? "";
+                SpawnHotkeyId = Str(root["SpawnHotkeyId"]) ?? "";
+                SpawnHotkeyName = Str(root["SpawnHotkeyName"]) ?? "";
+                SpawnHotkeyCount = Int(root["SpawnHotkeyCount"], 1);
+                SpawnHotkeyDistance = Int(root["SpawnHotkeyDistance"], 6);
+                SpawnHotkeyFriendly = Bool(root["SpawnHotkeyFriendly"], false);
+
+                SpawnBindings.Clear();
+                if (root["SpawnBindings"] is JsonObject binds)
                 {
-                    var root = JsonNode.Parse(File.ReadAllText(StatePath)) as JsonObject;
-                    if (root != null)
+                    foreach (var kv in binds)
                     {
-                        SelectedPage = Str(root["SelectedPage"]) ?? SelectedPage;
-                        AutoSave = Bool(root["AutoSave"], AutoSave);
-                        OnlyWhenTargetOrPanelForeground = Bool(root["OnlyWhenTargetOrPanelForeground"], OnlyWhenTargetOrPanelForeground);
-                        PanelToggleHotkey = Str(root["PanelToggleHotkey"]) ?? PanelToggleHotkey;
-                        SpawnHotkey = Str(root["SpawnHotkey"]) ?? "";
-                        SpawnHotkeyId = Str(root["SpawnHotkeyId"]) ?? "";
-                        SpawnHotkeyName = Str(root["SpawnHotkeyName"]) ?? "";
-                        SpawnHotkeyCount = Int(root["SpawnHotkeyCount"], 1);
-                        SpawnHotkeyDistance = Int(root["SpawnHotkeyDistance"], 6);
-                        SpawnHotkeyFriendly = Bool(root["SpawnHotkeyFriendly"], false);
-
-                        SpawnBindings.Clear();
-                        if (root["SpawnBindings"] is JsonObject binds)
+                        if (string.IsNullOrWhiteSpace(kv.Key) || kv.Value is not JsonObject o) continue;
+                        SpawnBindings[kv.Key] = new SpawnBinding
                         {
-                            foreach (var kv in binds)
-                            {
-                                if (string.IsNullOrWhiteSpace(kv.Key) || kv.Value is not JsonObject o) continue;
-                                SpawnBindings[kv.Key] = new SpawnBinding
-                                {
-                                    Hotkey = Str(o["Hotkey"]) ?? "",
-                                    Name = Str(o["Name"]) ?? "",
-                                    Count = Int(o["Count"], 1),
-                                    Distance = Int(o["Distance"], 800),
-                                    Friendly = Bool(o["Friendly"], false)
-                                };
-                            }
-                        }
-
-                        // 旧版单条绑定迁移成一条记录
-                        if (!string.IsNullOrEmpty(SpawnHotkey) && !string.IsNullOrEmpty(SpawnHotkeyId)
-                            && !SpawnBindings.ContainsKey(SpawnHotkeyId))
-                        {
-                            SpawnBindings[SpawnHotkeyId] = new SpawnBinding
-                            {
-                                Hotkey = SpawnHotkey,
-                                Name = SpawnHotkeyName,
-                                Count = SpawnHotkeyCount <= 0 ? 1 : SpawnHotkeyCount,
-                                Distance = SpawnHotkeyDistance <= 0 ? 800 : SpawnHotkeyDistance,
-                                Friendly = SpawnHotkeyFriendly
-                            };
-                        }
-                        RestoreSettings = Bool(root["RestoreSettings"], true);
-                        if (root["Features"] is JsonObject feats)
-                        {
-                            foreach (var kv in feats)
-                            {
-                                if (!map.TryGetValue(kv.Key, out var vm)) continue;
-                                if (kv.Value is not JsonObject o) continue;
-                                vm.Hotkey = Str(o["Hotkey"]) ?? "";
-                                if (!RestoreSettings) continue;
-                                vm.IsEnabled = Bool(o["Enabled"], false);
-                                string val = Str(o["Value"]);
-                                if (!string.IsNullOrEmpty(val)) vm.ValueText = val;
-                            }
-                        }
+                            Hotkey = Str(o["Hotkey"]) ?? "",
+                            Name = Str(o["Name"]) ?? "",
+                            Count = Int(o["Count"], 1),
+                            Distance = Int(o["Distance"], 800),
+                            Friendly = Bool(o["Friendly"], false)
+                        };
                     }
                 }
-                catch
+
+                // 旧版单条绑定迁移成一条记录
+                if (!string.IsNullOrEmpty(SpawnHotkey) && !string.IsNullOrEmpty(SpawnHotkeyId)
+                    && !SpawnBindings.ContainsKey(SpawnHotkeyId))
                 {
-                    // 读取失败时保留默认值，并在保存时备份原文件
+                    SpawnBindings[SpawnHotkeyId] = new SpawnBinding
+                    {
+                        Hotkey = SpawnHotkey,
+                        Name = SpawnHotkeyName,
+                        Count = SpawnHotkeyCount <= 0 ? 1 : SpawnHotkeyCount,
+                        Distance = SpawnHotkeyDistance <= 0 ? 800 : SpawnHotkeyDistance,
+                        Friendly = SpawnHotkeyFriendly
+                    };
+                }
+                RestoreSettings = Bool(root["RestoreSettings"], true);
+                if (root["Features"] is JsonObject feats)
+                {
+                    foreach (var kv in feats)
+                    {
+                        if (!map.TryGetValue(kv.Key, out var vm)) continue;
+                        if (kv.Value is not JsonObject o) continue;
+                        vm.Hotkey = Str(o["Hotkey"]) ?? "";
+                        if (!RestoreSettings) continue;
+                        if (vm.HasToggle && o["Enabled"] is JsonValue flag && flag.TryGetValue<bool>(out bool enabled))
+                            vm.DesiredEnabled = enabled;
+                        string val = Str(o["Value"]);
+                        if (!string.IsNullOrEmpty(val)) vm.ValueText = val;
+                    }
                 }
             }
 
-            if (File.Exists(PrefsPath))
+            if (ReadWithBackup(PrefsPath) is JsonObject p)
             {
-                try
+                Theme = Str(p["Theme"]) ?? Theme;
+                if (p["Favorites"] is JsonArray arr)
                 {
-                    var p = JsonNode.Parse(File.ReadAllText(PrefsPath)) as JsonObject;
-                    if (p != null)
-                    {
-                        Theme = Str(p["Theme"]) ?? Theme;
-                        if (p["Favorites"] is JsonArray arr)
-                        {
-                            Favorites.Clear();
-                            foreach (var n in arr) if (Str(n) is string s) Favorites.Add(s);
-                        }
-                    }
+                    Favorites.Clear();
+                    foreach (var n in arr) if (Str(n) is string s) Favorites.Add(s);
                 }
-                catch { }
             }
 
             foreach (var f in Favorites)
@@ -180,7 +165,7 @@ namespace PBZTrainer.Services
                 {
                     feats[vm.Id] = new JsonObject
                     {
-                        ["Enabled"] = vm.IsEnabled,
+                        ["Enabled"] = vm.HasToggle ? vm.DesiredEnabled : null,
                         ["Value"] = vm.ValueText ?? "",
                         ["Hotkey"] = vm.Hotkey ?? ""
                     };
@@ -230,19 +215,74 @@ namespace PBZTrainer.Services
             }
         }
 
-        private static void WriteAtomic(string path, string text)
+        private JsonObject ReadWithBackup(string path)
         {
-            string tmp = path + ".tmp";
-            File.WriteAllText(tmp, text);
+            foreach (string candidate in new[] { path, path + ".bak" })
+            {
+                try
+                {
+                    var document = ReadDocument(candidate);
+                    if (candidate != path) _recoveryNotes.Add("已从备份恢复 " + Path.GetFileName(path));
+                    return document;
+                }
+                catch (FileNotFoundException) { }
+                catch (Exception ex) when (ex is JsonException or ArgumentException)
+                {
+                    // 保留原件，等下一次成功的原子替换将其移到单独的恢复文件。
+                    _recoveryNotes.Add(Path.GetFileName(candidate) + " 已损坏，原文件将保留");
+                }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                {
+                    _unreadable.Add(path);
+                    _recoveryNotes.Add(Path.GetFileName(candidate) + " 无法读取，本次保留磁盘配置");
+                }
+            }
+            return null;
+        }
+
+        private static JsonObject ReadDocument(string path)
+        {
+            var root = JsonNode.Parse(File.ReadAllText(path)) as JsonObject
+                ?? throw new JsonException("配置根节点应为对象");
+            // JsonObject 延迟解析键；在采用文件前确认所有对象均可枚举。
+            static void Validate(JsonNode node)
+            {
+                if (node is JsonObject obj) foreach (var entry in obj) Validate(entry.Value);
+                else if (node is JsonArray array) foreach (var item in array) Validate(item);
+            }
+            Validate(root);
+            return root;
+        }
+
+        private void WriteAtomic(string path, string text)
+        {
+            if (_unreadable.Contains(path)) throw new IOException("配置读取失败，保留磁盘文件");
+            string tmp = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
             try
             {
-                if (File.Exists(path)) File.Delete(path);
-                File.Move(tmp, path);
+                using (var stream = new FileStream(tmp, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+                {
+                    stream.Write(System.Text.Encoding.UTF8.GetBytes(text));
+                    stream.Flush(flushToDisk: true);
+                }
+
+                if (!File.Exists(path))
+                {
+                    File.Move(tmp, path);
+                    return;
+                }
+
+                string backup = path + ".bak";
+                try { ReadDocument(path); }
+                catch (Exception ex) when (ex is JsonException or ArgumentException)
+                {
+                    backup = path + ".corrupt-" + Guid.NewGuid().ToString("N");
+                }
+                File.Replace(tmp, path, backup);
             }
-            catch
+            finally
             {
-                File.WriteAllText(path, text);
-                try { File.Delete(tmp); } catch { }
+                if (File.Exists(tmp)) File.Delete(tmp);
             }
         }
 

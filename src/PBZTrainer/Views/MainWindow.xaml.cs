@@ -1,6 +1,6 @@
 using System;
 using System.Collections.Generic;
-using System.Collections.ObjectModel;
+using System.Collections.Specialized;
 using System.Linq;
 using System.Text.Json.Nodes;
 using System.Threading;
@@ -8,6 +8,7 @@ using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
+using System.Windows.Data;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Threading;
@@ -35,7 +36,7 @@ namespace PBZTrainer.Views
         };
 
         private readonly List<FeatureVm> _all = new();
-        private readonly ObservableCollection<FeatureVm> _visible = new();
+        private readonly ListCollectionView _visible;
         private readonly BridgeClient _bridge = new();
         private readonly OverlayService _overlay;
         private readonly HotkeyService _hotkeys = new();
@@ -46,6 +47,10 @@ namespace PBZTrainer.Views
         private StateStore _state;
         private string _tab = "basic";
         private bool _connecting;
+        private bool _polling;
+        private bool _restorePending;
+        private bool _restoring;
+        private int _connectionVersion;
         private bool _suppressSave;
         private FeatureVm _hotkeyTarget;
         private bool _capturingPanelKey;
@@ -55,6 +60,12 @@ namespace PBZTrainer.Views
         public MainWindow()
         {
             InitializeComponent();
+
+            _visible = new ListCollectionView(_all);
+            _visible.LiveFilteringProperties.Add(nameof(FeatureVm.IsEnabled));
+            _visible.IsLiveFiltering = true;
+            ((INotifyCollectionChanged)_visible).CollectionChanged += (_, __) => UpdateFeatureSummary();
+            FeatureCards.ItemsSource = _visible;
 
             _overlay = new OverlayService(_bridge);
 
@@ -96,7 +107,7 @@ namespace PBZTrainer.Views
                 vm.ToggleRequested += target => _ = ApplyAsync(vm, target);
                 vm.PropertyChanged += (_, args) =>
                 {
-                    if (args.PropertyName is nameof(FeatureVm.IsEnabled) or nameof(FeatureVm.ValueText)
+                    if (args.PropertyName is nameof(FeatureVm.DesiredEnabled) or nameof(FeatureVm.ValueText)
                         or nameof(FeatureVm.Hotkey) or nameof(FeatureVm.IsFavorite))
                         ScheduleSave();
                 };
@@ -110,10 +121,15 @@ namespace PBZTrainer.Views
                 : "已关闭：每次启动都是全部关闭的干净状态";
             RebuildHotkeys();
 
-            _hotkeys.Start();
             _hotkeys.Filter = _ => ShouldFire();
+            _hotkeys.Start();
 
             _poll.Start();
+            if (_state.RecoveryMessage.Length > 0)
+            {
+                SaveHint.ToolTip = _state.RecoveryMessage;
+                ShowToast(_state.RecoveryMessage, 5);
+            }
             _ = AutoConnectAsync();
         }
 
@@ -138,7 +154,9 @@ namespace PBZTrainer.Views
 
         private async Task AutoConnectAsync()
         {
-            if (_connecting) return;
+            if (_connecting || _restoring) return;
+            _connectionVersion++;
+            _restorePending = false;
             _connecting = true;
             try
             {
@@ -148,19 +166,29 @@ namespace PBZTrainer.Views
 
                 if (!EnsureRuntimeReady()) return;
 
+                (_views.GetValueOrDefault("chain") as SkillChainView)?.ResetConnection();
                 bool ok = await _bridge.ConnectAsync(true, m => Dispatcher.Invoke(() => SetStatus(m, "#8C8390", "◌")));
                 if (ok)
                 {
                     var runningCompletion = _views.GetValueOrDefault("completion") as CompletionView;
+                    var chain = _views.GetValueOrDefault("chain") as SkillChainView;
                     _views.Clear();
                     if (runningCompletion?.IsRunning == true) _views["completion"] = runningCompletion;
+                    if (chain != null)
+                    {
+                        _views["chain"] = chain;
+                        if (chain.IsLoaded) _ = chain.LoadAsync();
+                    }
                     if (PageHost.Visibility == Visibility.Visible && !IsFeatureTab(_tab))
                         PageHost.Content = GetView(_tab);
                     SyncFeatureStates();
+                    foreach (var vm in _all) vm.RestoreFailure = "";
                     RebuildHotkeys();
                     ShowToast(_bridge.GateOk
                         ? "已连接游戏 · " + (_bridge.Ready ? "角色状态就绪" : "请进入存档")
                         : "已连接，但功能校验未解除：部分功能可能提示需要解锁（可能与游戏版本不匹配）");
+                    _restorePending = _state.RestoreSettings;
+                    await RestoreWhenReadyAsync();
                 }
                 else if (_bridge.State == BridgeState.Error)
                 {
@@ -253,18 +281,26 @@ namespace PBZTrainer.Views
 
         private async Task PollAsync()
         {
+            if (_polling || _connecting || _restoring) return;
             if (_bridge.IsConnected)
             {
+                int version = _connectionVersion;
+                _polling = true;
                 try
                 {
-                    if (await _bridge.RefreshAsync() != null)
+                    if (await _bridge.RefreshAsync() != null && version == _connectionVersion)
+                    {
                         SyncFeatureStates();
+                        await RestoreWhenReadyAsync();
+                    }
                 }
                 catch
                 {
+                    if (version != _connectionVersion) return;
                     _bridge.Disconnect();
                     RefreshStatus();
                 }
+                finally { _polling = false; }
                 return;
             }
 
@@ -282,58 +318,56 @@ namespace PBZTrainer.Views
 
         private void ApplyFilter()
         {
-            IEnumerable<FeatureVm> items;
-
-            if (IsFeatureTab(_tab))
+            if (_visible == null || !IsFeatureTab(_tab)) return;
+            string query = SearchBox.Text.Trim();
+            bool enabledOnly = OnlyEnabledFilter.IsChecked == true;
+            bool acrossCategories = enabledOnly || query.Length > 0;
+            using (_visible.DeferRefresh())
             {
-                string cat = CurrentCategory;
-                items = _all.Where(f => f.Page == cat);
+                if (acrossCategories && _visible.GroupDescriptions.Count == 0)
+                    _visible.GroupDescriptions.Add(new PropertyGroupDescription(nameof(FeatureVm.Page)));
+                else if (!acrossCategories)
+                    _visible.GroupDescriptions.Clear();
+                _visible.Filter = item =>
+                {
+                    var vm = (FeatureVm)item;
+                    if (!acrossCategories) return vm.Page == CurrentCategory;
+                    if (enabledOnly && (!vm.HasToggle || !vm.IsEnabled)) return false;
+                    return query.Length == 0 || vm.Title.Contains(query, StringComparison.OrdinalIgnoreCase)
+                        || vm.Description.Contains(query, StringComparison.OrdinalIgnoreCase)
+                        || vm.Id.Contains(query, StringComparison.OrdinalIgnoreCase)
+                        || vm.Page.Contains(query, StringComparison.OrdinalIgnoreCase);
+                };
             }
-            else
-            {
-                items = Enumerable.Empty<FeatureVm>();
-            }
-
-            string q = SearchBox.Text?.Trim() ?? "";
-            if (q.Length > 0)
-                items = items.Where(f => f.Title.Contains(q, StringComparison.OrdinalIgnoreCase)
-                                      || f.Description.Contains(q, StringComparison.OrdinalIgnoreCase)
-                                      || f.Id.Contains(q, StringComparison.OrdinalIgnoreCase));
-
-            var list = items.ToList();
-            _visible.Clear();
-            foreach (var vm in list) _visible.Add(vm);
-            RenderCards(list);
-
-            EmptyHint.Visibility = list.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
-            EmptyHint.Text = "没有匹配的功能，试试其他关键词";
-
-            if (IsFeatureTab(_tab))
-            {
-                int total = _all.Count(f => f.Page == CurrentCategory);
-                CountBadge.Text = total + " 项";
-                PageTitle.Text = CurrentCategory;
-                PageSubtitle.Text = FeatureCategories.FirstOrDefault(c => c.Name == CurrentCategory).Hint
-                                    ?? "扩展参数与高级配置";
-            }
+            PageTitle.Text = enabledOnly ? "已开启的功能" : acrossCategories ? "搜索结果" : CurrentCategory;
+            PageSubtitle.Text = enabledOnly ? "全部分类 · 最近确认的开关状态" : acrossCategories ? "全部分类" :
+                FeatureCategories.FirstOrDefault(c => c.Name == CurrentCategory).Hint;
+            UpdateFeatureSummary();
+            CardScroll.ScrollToTop();
         }
 
-        /// <summary>每个分类自成一页，这里只负责把卡片铺成两列。</summary>
-        private void RenderCards(List<FeatureVm> list)
+        private void UpdateFeatureSummary()
         {
-            FeatureSections.Children.Clear();
-            if (list.Count == 0) return;
-
-            var template = (DataTemplate)FindResource("CardTemplate");
-            var grid = new UniformGrid { Columns = 2 };
-            foreach (var vm in list)
-                grid.Children.Add(new ContentControl { Content = vm, ContentTemplate = template });
-            FeatureSections.Children.Add(grid);
+            if (!IsFeatureTab(_tab)) return;
+            bool enabledOnly = OnlyEnabledFilter.IsChecked == true;
+            bool searching = !string.IsNullOrWhiteSpace(SearchBox.Text);
+            int total = enabledOnly ? _all.Count(f => f.HasToggle) :
+                searching ? _all.Count : _all.Count(f => f.Page == CurrentCategory);
+            CountBadge.Text = $"{_visible.Count} / {total} 项";
+            EmptyHint.Visibility = _visible.IsEmpty ? Visibility.Visible : Visibility.Collapsed;
+            EmptyHint.Text = enabledOnly && !searching ? "当前没有开启的功能" : "没有匹配的功能，试试其他关键词";
         }
 
         private void RestoreToggle_Click(object sender, RoutedEventArgs e)
         {
             _state.RestoreSettings = RestoreToggle.IsChecked == true;
+            if (!_state.RestoreSettings) _restorePending = false;
+            else if (_bridge.IsConnected && _bridge.Ready)
+            {
+                foreach (var vm in _all.Where(vm => vm.HasToggle && !vm.Info.IsCollection && !vm.IsBusy &&
+                                                    _bridge.FeatureStates.ContainsKey(vm.Id)))
+                    vm.DesiredEnabled = vm.IsEnabled;
+            }
             SaveState();
             RestoreToggle.ToolTip = _state.RestoreSettings
                 ? "已开启：下次打开会自动套用上次的开关与数值"
@@ -541,21 +575,18 @@ namespace PBZTrainer.Views
             {
                 PageHead.Visibility = Visibility.Visible;
                 SearchHost.Visibility = Visibility.Visible;
-                ChipHost.Visibility = Visibility.Collapsed;
                 FeatureHost.Visibility = Visibility.Visible;
                 PageHost.Visibility = Visibility.Collapsed;
                 PageHost.Content = null;
 
-                PageTitle.Text = CurrentCategory;
-                PageSubtitle.Text = FeatureCategories.FirstOrDefault(c => c.Name == CurrentCategory).Hint ?? "";
-                CountBadge.Text = _all.Count(f => f.Page == CurrentCategory) + " 项";
-                ApplyFilter();
+                OnlyEnabledFilter.IsChecked = false;
+                if (SearchBox.Text.Length > 0) SearchBox.Clear();
+                else ApplyFilter();
             }
             else
             {
                 PageHead.Visibility = Visibility.Collapsed;
                 SearchHost.Visibility = Visibility.Collapsed;
-                ChipHost.Visibility = Visibility.Collapsed;
                 FeatureHost.Visibility = Visibility.Collapsed;
                 PageHost.Content = GetView(tag);
                 PageHost.Visibility = Visibility.Visible;
@@ -728,9 +759,88 @@ namespace PBZTrainer.Views
             ApplyFilter();
         }
 
+        private void OnlyEnabledFilter_Click(object sender, RoutedEventArgs e) => ApplyFilter();
+
         // 轮询只回填空闲卡片。本次操作自己的回读可以确认正在等待的卡片。
         private void SyncFeatureStates(FeatureVm completed = null)
             => _bridge.ApplyStates(_all.Where(vm => !vm.IsBusy || vm == completed));
+
+        private async Task RestoreWhenReadyAsync()
+        {
+            if (!_restorePending || !_state.RestoreSettings || !_bridge.IsConnected || !_bridge.Ready) return;
+            _restorePending = false;
+            _restoring = true;
+            int version = _connectionVersion;
+            var attempted = new List<FeatureVm>();
+            int failures = 0;
+            try
+            {
+                foreach (var vm in _all)
+                {
+                    if (!_state.RestoreSettings || version != _connectionVersion) break;
+                    if (!vm.HasToggle || vm.Info.IsCollection || vm.DesiredEnabled is not bool target || vm.IsBusy) continue;
+                    if (!target && !vm.IsEnabled) continue;
+                    if (!_bridge.IsConnected)
+                    {
+                        vm.RestoreFailure = "上次设置未恢复：连接已断开。";
+                        failures++;
+                        continue;
+                    }
+                    if (!vm.IsSupported || !_bridge.FeatureStates.ContainsKey(vm.Id) || vm.HasValueError)
+                    {
+                        vm.RestoreFailure = "上次设置未恢复：当前功能不可用或保存的数值无效。";
+                        failures++;
+                        continue;
+                    }
+                    if (target && vm.IsEnabled && vm.IsApplied && !vm.HasValue) continue;
+
+                    attempted.Add(vm);
+                    vm.SetApplyState(true, target);
+                    try
+                    {
+                        var reply = await _bridge.ApplyFeatureAsync(vm, target, restoring: true);
+                        if (reply == null || !BridgeClient.IsTrue(reply["ok"]))
+                            vm.RestoreFailure = "上次设置未恢复：" + (Str(reply?["message"]) ?? "未收到确认");
+                    }
+                    catch (Exception ex) { vm.RestoreFailure = "上次设置未恢复：" + ex.Message; }
+                }
+
+                if (attempted.Count != 0 && version == _connectionVersion)
+                {
+                    JsonObject snapshot = null;
+                    try { if (_bridge.IsConnected) snapshot = await _bridge.RefreshAsync(); }
+                    catch (Exception) { /* 下面将没有回读的卡片标为未确认。 */ }
+                    if (version != _connectionVersion) return;
+                    if (snapshot != null) _bridge.ApplyStates(attempted);
+                    foreach (var vm in attempted)
+                    {
+                        if (vm.RestoreFailure.Length == 0 && !RestoreConfirmed(vm, snapshot))
+                            vm.RestoreFailure = "上次设置未恢复：当前会话未确认已生效。";
+                        if (vm.RestoreFailure.Length > 0) failures++;
+                    }
+                }
+                if (version == _connectionVersion && (attempted.Count > 0 || failures > 0))
+                    ShowToast(failures == 0 ? $"已恢复 {attempted.Count} 项设置" : $"有 {failures} 项设置未恢复，可在功能卡查看原因。", 4);
+            }
+            finally
+            {
+                foreach (var vm in attempted) vm.SetApplyState(false);
+                _restoring = false;
+            }
+        }
+
+        private bool RestoreConfirmed(FeatureVm vm, JsonObject snapshot)
+        {
+            if (snapshot?["features"] is not JsonArray || !_bridge.FeatureStates.TryGetValue(vm.Id, out var state) ||
+                vm.IsEnabled != vm.DesiredEnabled) return false;
+            if (!vm.IsEnabled) return true;
+            if (!vm.IsApplied) return false;
+            if (!vm.HasValue || state["value"] == null) return true;
+            // 旧版回读可能不含数值。提供数值时允许单精度往返产生的误差。
+            double desired = vm.NumericValue;
+            return NumericInput.TryParse(state["value"].ToString(), out var actual) &&
+                   Math.Abs(actual - desired) <= Math.Abs(desired) * 1.2e-7;
+        }
 
         private async void Action_Click(object sender, RoutedEventArgs e)
         {
@@ -793,6 +903,7 @@ namespace PBZTrainer.Views
         private async Task ApplyAsync(FeatureVm vm, bool? toggleTarget = null)
         {
             if (!vm.CanApply) return;
+            vm.RestoreFailure = "";
             vm.SetApplyState(true, toggleTarget);
 
             try
@@ -806,6 +917,7 @@ namespace PBZTrainer.Views
                 }
 
                 bool target = toggleTarget ?? vm.IsEnabled;
+                if (vm.HasToggle) vm.DesiredEnabled = target;
                 var result = await _bridge.ApplyFeatureAsync(vm, target);
 
                 if (result == null || !BridgeClient.IsTrue(result["ok"]))
@@ -928,11 +1040,12 @@ namespace PBZTrainer.Views
 
         private bool ShouldFire()
         {
-            if (!_state.OnlyWhenTargetOrPanelForeground) return true;
             IntPtr h = GetForegroundWindow();
-            if (h == IntPtr.Zero) return false;
+            if (h == IntPtr.Zero) return !_state.OnlyWhenTargetOrPanelForeground;
             GetWindowThreadProcessId(h, out uint pid);
-            return pid == (uint)Environment.ProcessId || (uint)_bridge.TargetPid == pid;
+            if (pid == (uint)Environment.ProcessId)
+                return Keyboard.FocusedElement is not (TextBoxBase { IsReadOnly: false } or PasswordBox);
+            return !_state.OnlyWhenTargetOrPanelForeground || (uint)_bridge.TargetPid == pid;
         }
 
         [System.Runtime.InteropServices.DllImport("user32.dll")]
@@ -1097,6 +1210,8 @@ namespace PBZTrainer.Views
         {
             try
             {
+                _connectionVersion++;
+                _restorePending = false;
                 _poll.Stop();
                 _overlay.StopAll();
                 SaveState();
