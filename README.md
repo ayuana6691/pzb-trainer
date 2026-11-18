@@ -104,6 +104,12 @@ dotnet publish src\PBZTrainer\PBZTrainer.csproj -c Release -r win-x64 --self-con
 
 产物 `out\PBZTrainer.exe` 约 66 MB，单文件、免安装。
 
+### GitHub Actions 自动构建与发布
+
+- 推送到 `main`、向 `main` 提交 Pull Request 或手动运行工作流时，Windows 构建会把 `PBZTrainer-UI-preview-win-x64.zip` 和 SHA-256 校验文件上传到该次运行的 Artifacts，保留 14 天。
+- 将新 `v*` 标签推送到含此工作流的提交时，构建通过后会在当前仓库的 Releases 中创建同名预发行版。
+- 自动构建使用仓库源码和 .NET 8，产物包含 .NET 运行时。需要连接游戏时，请单独提供本地运行模块 `PBZBridge.dll`。
+
 ## 目录结构
 
 ```
