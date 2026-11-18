@@ -60,7 +60,7 @@ jobs:
         env:
           VERSION: ${{ steps.ver.outputs.version }}
         run: |
-          ./pack.ps1 -OutRoot out/ci -NoBridge -Version $env:VERSION
+          ./pack.ps1 -OutRoot out/ci -Version $env:VERSION
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Publish release
@@ -70,7 +70,7 @@ jobs:
           TAG: ${{ steps.ver.outputs.tag }}
           VERSION: ${{ steps.ver.outputs.version }}
         run: |
-          $zip = "out/ci/PBZTrainer-v$env:VERSION-UI-preview-win-x64.zip"
+          $zip = "out/ci/PBZTrainer-v$env:VERSION-win-x64.zip"
           $sums = 'out/ci/SHA256SUMS.txt'
           if (-not (Test-Path $zip))  { throw "没找到 $zip" }
           if (-not (Test-Path $sums)) { throw "没找到 $sums" }
@@ -86,10 +86,9 @@ jobs:
             "| 版本（取自 tag） | $($env:VERSION) |"
             '| 构建 | GitHub Actions · .NET 8 self-contained |'
             '| 自带 .NET 运行时 | 是（对方机器不用装 .NET） |'
-            '| 内嵌运行模块 | 否 —— CI 拿不到 PBZBridge.dll |'
+            '| 内嵌运行模块 | 是（打包时校验 SHA-256 一致） |'
             ''
-            '这是自动构建的**界面预览包**：能启动、能浏览所有页面；连接游戏需要单独提供运行模块。'
-            '要「双击即用」的完整包，在有 `PBZBridge.dll` 的机器上跑 `build.cmd`。'
+            '**双击即用**：单文件、免安装，不需要装 .NET，不需要额外放任何文件。'
             ''
             '校验和：'
             ''

@@ -14,7 +14,7 @@
     <SatelliteResourceLanguages>zh-Hans</SatelliteResourceLanguages>
     <!-- 版本号唯一来源：本地打包取这里的值，CI 用 tag 覆盖（-p:Version=x.y.z）。
          AssemblyVersion / FileVersion 由 SDK 从 Version 派生，不再单独写死。 -->
-    <Version>1.11.17</Version>
+    <Version>1.11.18</Version>
     <!-- 把运行模块打进 exe：默认开启，产物单文件双击即用。
          只做界面预览时用 -p:EmbedBridge=false 关掉。 -->
     <EmbedBridge Condition="'$(EmbedBridge)' == ''">true</EmbedBridge>
