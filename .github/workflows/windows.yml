@@ -70,12 +70,12 @@ jobs:
           TAG: ${{ steps.ver.outputs.tag }}
           VERSION: ${{ steps.ver.outputs.version }}
         run: |
-          $zip = "out/ci/PBZTrainer-v$env:VERSION-win-x64.zip"
+          $zips = @(Get-ChildItem -LiteralPath 'out/ci' -Filter '*.zip' -File | ForEach-Object { $_.FullName })
           $sums = 'out/ci/SHA256SUMS.txt'
-          if (-not (Test-Path $zip))  { throw "没找到 $zip" }
+          if ($zips.Count -eq 0)     { throw 'out/ci 里没有 zip' }
           if (-not (Test-Path $sums)) { throw "没找到 $sums" }
 
-          $sumLine = (Get-Content $sums -Encoding utf8 | Select-Object -First 1)
+          $sumText = ((Get-Content $sums -Encoding utf8) -join "`n")
           $notes = @(
             "## $env:TAG"
             ''
@@ -88,12 +88,16 @@ jobs:
             '| 自带 .NET 运行时 | 是（对方机器不用装 .NET） |'
             '| 内嵌运行模块 | 是（打包时校验 SHA-256 一致） |'
             ''
-            '**双击即用**：单文件、免安装，不需要装 .NET，不需要额外放任何文件。'
+            '**双击即用**：解压后直接运行 `PBZTrainer.exe`，不需要装 .NET，不需要额外放任何文件。'
+            ''
+            '`PBZTrainer-win-x64.zip` 是固定文件名，永远指向最新一版，可以直接用这个地址下载：'
+            ''
+            "$($env:GITHUB_SERVER_URL)/$($env:GITHUB_REPOSITORY)/releases/latest/download/PBZTrainer-win-x64.zip"
             ''
             '校验和：'
             ''
             '```'
-            $sumLine
+            $sumText
             '```'
             ''
             "构建记录：$env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID"
@@ -107,7 +111,8 @@ jobs:
             gh release delete $env:TAG --yes --repo $env:GITHUB_REPOSITORY
             if ($LASTEXITCODE -ne 0) { throw "删除已存在的 Release 失败" }
           }
-          gh release create $env:TAG $zip $sums --verify-tag --latest `
+          $assets = @($env:TAG) + $zips + @($sums)
+          gh release create @assets --verify-tag --latest `
             --title $env:TAG --notes-file 'out/ci/RELEASE-NOTES.md' --repo $env:GITHUB_REPOSITORY
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
