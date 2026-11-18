@@ -11,17 +11,17 @@
 
 ## 下载
 
-**[⬇ 下载 PBZTrainer-win-x64.zip](https://github.com/ayuana6691/pzb-trainer/releases/latest/download/PBZTrainer-win-x64.zip)**（Windows x64，压缩包约 62 MiB，解压后是单个 exe）
+**[⬇ 打开最新版 Release](https://github.com/ayuana6691/pzb-trainer/releases/latest)**（Windows x64，在页面里下载 `PBZTrainer-v<版本>-win-x64.zip`，约 62 MiB，解压后是单个 exe）
 
 | 项目 | 说明 |
 |---|---|
-| 版本 | 见 [Releases 最新版](https://github.com/ayuana6691/pzb-trainer/releases/latest)，版本号取自 git tag |
+| 版本 | 页面上的就是最新一版，版本号取自 git tag；zip 文件名也带着版本号 |
 | 体积 | 约 62 MiB；解压后 `PBZTrainer.exe` 约 67.5 MiB（每版略有浮动） |
 | 使用 | 下载 → 解压 → 双击 `PBZTrainer.exe` → UAC 点「是」→ 先开游戏、进存档后即为「● 游戏已就绪」 |
 | 自带 | .NET 8 运行时与运行模块，免安装、免配置，**不需要单独准备任何文件** |
 | 校验 | 包内 `SHA256SUMS.txt`，Release 页也逐项列出 |
 
-这个链接是固定地址（`/releases/latest/download/` + 固定文件名），永远指向最新一版，不用记版本号。要下某个具体版本，去 [Releases 列表](https://github.com/ayuana6691/pzb-trainer/releases) 挑（只保留最新 3 个）。
+`/releases/latest` 永远落在最新一版上，所以这个入口不用随版本改，但下载下来的文件仍然叫 `PBZTrainer-v1.11.18-win-x64.zip` 这种带版本号的名字，存到本地也分得清。要下旧版去 [Releases 列表](https://github.com/ayuana6691/pzb-trainer/releases) 挑（只保留最新 3 个）。
 
 包内文件：`PBZTrainer.exe`、`使用说明.txt`、`首次使用.txt`、`LICENSE`、`NOTICE.md`、`SHA256SUMS.txt`。
 
@@ -116,7 +116,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File pack.ps1
 |---|---|
 | `out\release\PBZTrainer.exe` | 主程序，单文件、约 70 MB，双击即用 |
 | `out\release\` | 发布目录：exe + 使用说明.txt + 首次使用.txt + LICENSE + NOTICE.md + SHA256SUMS.txt |
-| `out\PBZTrainer-win-x64.zip` | 打好的压缩包，文件名固定不带版本号（同目录另有 `SHA256SUMS.txt`） |
+| `out\PBZTrainer-v<版本>-win-x64.zip` | 打好的压缩包，文件名带版本号（同目录另有 `SHA256SUMS.txt`） |
 
 只出界面预览包（不含运行模块）：`pack.ps1 -NoBridge`，产物名为 `PBZTrainer-UI-preview-win-x64.zip`。带版本号出包用 `-Version 1.2.3`（tag 触发时 CI 就这么调，版本会写进 exe 的 FileVersion）。
 
@@ -131,7 +131,7 @@ git tag v1.2.3
 git push origin v1.2.3
 ```
 
-推 `v*` tag 后 [windows.yml](.github/workflows/windows.yml) 会：解析 tag 里的版本号 → `pack.ps1 -OutRoot out/ci -Version <版本>`（内嵌运行模块、跑完六步自检）→ `gh release create` 把 `PBZTrainer-win-x64.zip` 和 `SHA256SUMS.txt` 挂到同名 Release → 删掉第 4 个及更早的 Release（保留最新 3 个，tag 本身保留）。
+推 `v*` tag 后 [windows.yml](.github/workflows/windows.yml) 会：解析 tag 里的版本号 → `pack.ps1 -OutRoot out/ci -Version <版本>`（内嵌运行模块、跑完六步自检）→ `gh release create` 把 `PBZTrainer-v<版本>-win-x64.zip` 和 `SHA256SUMS.txt` 挂到同名 Release → 删掉第 4 个及更早的 Release（保留最新 3 个，tag 本身保留）。
 
 发一版要动的只有 `<Version>` 和 tag，README 不用改：下载链接指向 `/releases/latest/download/PBZTrainer-win-x64.zip`，文件名固定，永远是最新一版。
 
@@ -139,7 +139,7 @@ git push origin v1.2.3
 
 - **不上传 workflow artifact**：artifact 会占用账号存储额度，Release 资产不占，所以构建结果只进 Release。
 - **只保留最新 3 个 Release**：`KEEP_RELEASES` 在工作流顶部，改数字即可。
-- **文件名固定不带版本号**：`PBZTrainer-win-x64.zip` 每个版本都用同一个名字，README 的固定链接才能一直有效；版本号看 tag、Release 标题和 exe 的 FileVersion。
+- **zip 文件名带版本号**：`PBZTrainer-v<版本>-win-x64.zip`，存到本地一眼能看出是哪版；README 的下载入口指向 `/releases/latest` 页面，所以发版同样不用改文档。
 - 同一 tag 重跑会先删同名 Release 再重建（tag 不动），避免资产叠加；手动重跑用 `workflow_dispatch` 并填已存在的 tag。
 - 运行模块 `PBZBridge.dll` 已纳入版本库，CI 和本地走同一条打包路径，Release 里的包和 `build.cmd` 出的包内容一致（都是内嵌模块的单文件 exe）。自检不通过时构建直接失败，不会挂半成品 Release。
 

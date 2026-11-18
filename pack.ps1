@@ -371,9 +371,12 @@ function Invoke-Pack {
     Copy-Item -LiteralPath $exePath -Destination (Join-Path $script:OutRootAbs 'PBZTrainer.exe') -Force
 
     Step '6/6 打 zip'
-    # 文件名不带版本号：README 用 /releases/latest/download/ 指向它，发版不用改文档。
-    # 版本号在 tag、Release 标题和正文里；exe 里的 FileVersion 也带着。
-    $zipName = if ($embedBridge) { 'PBZTrainer-win-x64.zip' } else { 'PBZTrainer-UI-preview-win-x64.zip' }
+    # 文件名带版本号：PBZTrainer-v1.2.3-win-x64.zip；预览包多一段 UI-preview。
+    # README 的下载入口指向 /releases/latest 页面，所以发版不用改文档。
+    $suffix = if ($embedBridge) { "v$effectiveVersion" }
+              elseif ($versionFromArg) { "v$effectiveVersion-UI-preview" }
+              else { 'UI-preview' }
+    $zipName = "PBZTrainer-$suffix-win-x64.zip"
     $zipPath = Join-Path $script:OutRootAbs $zipName
     if ($NoZip) {
         Warn '-NoZip：跳过压缩'

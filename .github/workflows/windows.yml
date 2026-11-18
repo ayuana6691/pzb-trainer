@@ -90,9 +90,9 @@ jobs:
             ''
             '**双击即用**：解压后直接运行 `PBZTrainer.exe`，不需要装 .NET，不需要额外放任何文件。'
             ''
-            '`PBZTrainer-win-x64.zip` 是固定文件名，永远指向最新一版，可以直接用这个地址下载：'
+            '最新版固定入口（README 里的下载链接就指向它）：'
             ''
-            "$($env:GITHUB_SERVER_URL)/$($env:GITHUB_REPOSITORY)/releases/latest/download/PBZTrainer-win-x64.zip"
+            "$($env:GITHUB_SERVER_URL)/$($env:GITHUB_REPOSITORY)/releases/latest"
             ''
             '校验和：'
             ''
