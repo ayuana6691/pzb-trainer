@@ -133,7 +133,7 @@ git push origin v1.2.3
 
 推 `v*` tag 后 [windows.yml](.github/workflows/windows.yml) 会：解析 tag 里的版本号 → `pack.ps1 -OutRoot out/ci -Version <版本>`（内嵌运行模块、跑完六步自检）→ `gh release create` 把 `PBZTrainer-v<版本>-win-x64.zip` 和 `SHA256SUMS.txt` 挂到同名 Release → 删掉第 4 个及更早的 Release（保留最新 3 个，tag 本身保留）。
 
-发一版要动的只有 `<Version>` 和 tag，README 不用改：下载链接指向 `/releases/latest/download/PBZTrainer-win-x64.zip`，文件名固定，永远是最新一版。
+发一版要动的只有 `<Version>` 和 tag，README 不用改：下载入口指向 `/releases/latest` 页面，永远落在最新一版上。
 
 几个刻意的选择：
 
